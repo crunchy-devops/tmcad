@@ -3,3 +3,5 @@ scipy>=1.11.0        # For KD-tree spatial indexing
 h5py>=3.9.0         # For HDF5 storage
 psutil>=5.9.2       # For memory usage monitoring
 pytest>=7.4.0       # For running tests
+matplotlib>=3.10.0   # For contour generation
+ezdxf>=1.1.0        # For DXF file handling
