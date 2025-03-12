@@ -8,12 +8,34 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+    <style>
+        .point-selected {
+            background-color: #e3f2fd;
+        }
+        .break-line {
+            border-left: 3px solid #dc3545;
+            padding-left: 10px;
+            margin: 5px 0;
+        }
+    </style>
 </head>
 <body>
     <div class="container-fluid">
         <div class="row">
             <!-- Sidebar -->
             <div class="col-md-3 sidebar">
+                <!-- Saved Terrains -->
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h5>Saved Terrains</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="list-group" id="savedTerrains">
+                            <!-- Saved terrains will be listed here -->
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card">
                     <div class="card-header">
                         <h5>Terrain Controls</h5>
@@ -30,9 +52,33 @@
                                 <p>No terrain loaded</p>
                             </div>
                         </div>
+                        <div class="mb-3">
+                            <button class="btn btn-secondary" id="view2D" onclick="toggleViewMode()">Toggle 2D/3D View</button>
+                            <small class="text-muted d-block mt-1">2D view shows point IDs and Z values</small>
+                        </div>
                     </div>
                 </div>
                 
+                <!-- Break Lines -->
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5>Break Lines</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <button class="btn btn-primary mb-2 w-100" data-bs-toggle="modal" data-bs-target="#breakLineModal">Add Break Line Manually</button>
+                            <h6 class="mt-3">Selected Points</h6>
+                            <ul class="list-group" id="selectedPoints">
+                            </ul>
+                            <button class="btn btn-outline-primary mt-2 w-100" onclick="addBreakLine()">Create Break Line from Selection</button>
+                        </div>
+                        <div class="small text-muted mt-2">
+                            Either enter point IDs manually or click points on the plot to select them.
+                            Break lines require exactly 2 points.
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Point Editor -->
                 <div class="card mt-3">
                     <div class="card-header">
@@ -66,20 +112,32 @@
             <!-- Main Content -->
             <div class="col-md-9">
                 <div id="terrainPlot" style="height: 800px;"></div>
+                <div id="status" class="alert alert-info mt-2 d-none"></div>
             </div>
         </div>
     </div>
 
-    <!-- Status Modal -->
-    <div class="modal fade" id="statusModal" tabindex="-1">
+    <!-- Break Line Input Modal -->
+    <div class="modal fade" id="breakLineModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">Status</h5>
+                    <h5 class="modal-title">Add Break Line</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <p id="statusMessage"></p>
+                    <div class="mb-3">
+                        <label for="startPointId" class="form-label">Start Point ID</label>
+                        <input type="number" class="form-control" id="startPointId" placeholder="Enter start point ID">
+                    </div>
+                    <div class="mb-3">
+                        <label for="endPointId" class="form-label">End Point ID</label>
+                        <input type="number" class="form-control" id="endPointId" placeholder="Enter end point ID">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="addManualBreakLine()">Add Break Line</button>
                 </div>
             </div>
         </div>
@@ -87,5 +145,24 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="{{ url_for('static', filename='js/terrain.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/breaklines.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/terrain_storage.js') }}"></script>
+    
+    <script>
+        // Initialize Bootstrap components
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize all modals
+            var modals = [].slice.call(document.querySelectorAll('.modal'));
+            modals.map(function(modal) {
+                return new bootstrap.Modal(modal);
+            });
+
+            // Initialize status display
+            const status = document.getElementById('status');
+            if (status) {
+                status.classList.remove('d-none');
+            }
+        });
+    </script>
 </body>
 </html>
