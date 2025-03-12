@@ -1,6 +1,6 @@
 # Optimized 3D Terrain Point Cloud Implementation
 
-A high-performance Python implementation for handling large-scale 3D terrain point clouds, optimized for memory efficiency and fast access patterns.
+A high-performance Python implementation for handling large-scale 3D terrain point clouds, optimized for memory efficiency, spatial indexing, and compressed storage.
 
 ## Key Features
 
@@ -8,22 +8,17 @@ A high-performance Python implementation for handling large-scale 3D terrain poi
 - 📦 Array-based contiguous memory layout
 - 🔒 Thread-safe immutable points
 - ⚡ O(1) index-based point access
-- 💾 Efficient binary serialization
-- 🔍 Fast point lookup by ID
+- 🌳 KD-tree spatial indexing for fast queries
+- 🗜️ HDF5 compression with coordinate quantization
+- 🔍 Fast spatial search capabilities
 - 🧮 Built-in distance calculations
 
 ## Performance Metrics
 
-Real-world benchmark results:
-
-### Memory Efficiency
-- 32.07 bytes per point at 1M points (near theoretical minimum)
-- Linear scaling with dataset size
-- 30.58MB total memory for 1M points
-
-### Creation Performance
-- ~265,000 points per second
-- 3.77 seconds to create 1M points
+### Memory and Storage
+- Raw point storage: 32.07 bytes per point
+- Compressed storage: 9.86 bytes per point (69% reduction)
+- HDF5 file size: ~96KB for 10K points
 
 ### Access Performance (100K operations)
 | Dataset Size | Index Access (ops/sec) | ID Lookup (ops/sec) |
@@ -33,17 +28,53 @@ Real-world benchmark results:
 | 100K points | 261,800             | 706              |
 | 1M points   | 289,507             | 70               |
 
-Key Observations:
-- Index-based access maintains consistent performance (~290K ops/sec)
-- ID-based lookup should be used sparingly on large datasets
-- Memory usage achieves near-optimal efficiency
+### Spatial Query Performance
+- Nearest neighbor queries: O(log n) complexity
+- Radius search: ~100ms for 50-unit radius (10K points)
+- Spatial index build time: Linear with point count
+
+## Usage Examples
+
+### Basic Point Operations
+```python
+from point3d import Point3D, PointCloud
+from terrain_storage import TerrainManager
+
+# Create terrain manager
+terrain = TerrainManager(precision=0.01)
+
+# Add points
+point = Point3D(id=1, x=10.0, y=20.0, z=30.0)
+terrain.add_points([point])
+
+# Access points
+nearest = terrain.find_nearest_neighbors(point, k=5)
+```
+
+### Spatial Queries
+```python
+# Find points within radius
+center = Point3D(id=0, x=0.0, y=0.0, z=0.0)
+nearby_points = terrain.find_points_in_radius(center, radius=50.0)
+
+# Get terrain statistics
+stats = terrain.get_statistics()
+print(f"Number of points: {stats['num_points']}")
+print(f"Terrain bounds: {stats['bounds']}")
+```
+
+### Efficient Storage
+```python
+# Save terrain with compression
+terrain.save_to_hdf5("terrain.h5")
+
+# Load compressed terrain
+terrain = TerrainManager.load_from_hdf5("terrain.h5")
+```
 
 ## Implementation Details
 
 ### Point3D Class
-
-The `Point3D` class is designed for minimal memory footprint while maintaining high performance:
-
 ```python
 @dataclass(slots=True, frozen=True)
 class Point3D:
@@ -53,105 +84,51 @@ class Point3D:
     z: float   # 8 bytes
 ```
 
-#### Memory Optimizations
+### TerrainManager Features
+- KD-tree spatial indexing for efficient queries
+- Coordinate quantization for compression
+- HDF5-based storage with GZIP compression
+- Statistical analysis functions
 
-1. **Slots-based Layout**
-   - Uses `__slots__` to create a fixed memory layout
-   - Eliminates instance `__dict__` (~48 bytes savings per instance)
-   - Prevents dynamic attribute creation
-   - Faster attribute access due to direct memory lookup
+## Best Practices
 
-2. **Immutable Design**
-   - `frozen=True` makes instances immutable
-   - Enables safe caching and use as dictionary keys
-   - Thread-safe by design
-   - Prevents accidental modifications
+### Memory Management
+- Use index-based access for best performance
+- Enable compression for large datasets
+- Monitor memory usage with terrain statistics
 
-3. **Binary Serialization**
-   ```python
-   def to_bytes(self) -> bytes:
-       return struct.pack('!Qddd', self.id, self.x, self.y, self.z)
-   ```
-   - Compact 32-byte binary format
-   - Network byte order (big-endian) for consistency
-   - Format specification:
-     - `Q`: 8-byte unsigned long long (ID)
-     - `d`: 8-byte double precision float (coordinates)
+### Spatial Indexing
+- Build spatial index after bulk point additions
+- Use radius queries for local terrain analysis
+- Adjust precision based on terrain requirements
 
-### PointCloud Class
+### Data Persistence
+- Use HDF5 storage for large terrains
+- Enable compression for network transfer
+- Maintain consistent precision settings
 
-The `PointCloud` class provides efficient storage and retrieval for large collections of points:
+## Dependencies
+- numpy: Array operations and numerical computations
+- scipy: KD-tree spatial indexing
+- h5py: HDF5 file format support
+- psutil: Memory usage monitoring
 
-```python
-class PointCloud:
-    def __init__(self):
-        self._ids = array.array('Q')    # Contiguous ID storage
-        self._coords = array.array('d')  # Contiguous coordinate storage
-```
+## Performance Considerations
 
-#### Storage Optimizations
+1. **Cache Efficiency**
+   - Contiguous memory layout improves CPU cache utilization
+   - Sequential access patterns benefit from hardware prefetching
+   - Minimal cache misses due to packed storage
 
-1. **Array-based Storage**
-   - Uses `array.array` for native C-array storage
-   - Contiguous memory blocks for better cache utilization
-   - Minimal memory overhead per element
-   - Direct mapping to C data types
+2. **Memory Bandwidth**
+   - Reduced memory bandwidth requirements
+   - Efficient data transfer between memory and CPU
+   - Better performance for large datasets
 
-2. **Coordinate Packing**
-   - Stores coordinates sequentially: [x1,y1,z1,x2,y2,z2,...]
-   - Enables efficient bulk operations
-   - Optimal memory locality for sequential access
-   - Cache-friendly memory layout
-
-#### Access Patterns
-
-1. **Index-based Access (O(1))**
-   ```python
-   def get_point(self, index: int) -> Point3D:
-       base = index * 3
-       return Point3D(
-           id=self._ids[index],
-           x=self._coords[base],
-           y=self._coords[base + 1],
-           z=self._coords[base + 2]
-       )
-   ```
-   - Constant-time access using array indexing
-   - Efficient coordinate triplet mapping
-   - No intermediate storage allocation
-
-2. **ID-based Lookup (O(n))**
-   ```python
-   def get_point_by_id(self, point_id: int) -> Optional[Point3D]:
-       try:
-           index = self._ids.index(point_id)
-           return self.get_point(index)
-       except ValueError:
-           return None
-   ```
-   - Linear search through ID array
-   - Optional caching for frequent lookups
-   - Returns None if point not found
-
-## Usage Example
-
-```python
-# Create individual points
-p1 = Point3D(id=1, x=0.0, y=0.0, z=0.0)
-p2 = Point3D(id=2, x=1.0, y=1.0, z=1.0)
-
-# Calculate distance between points
-distance = p1.distance_to(p2)  # Returns √3 ≈ 1.732
-
-# Create a point cloud
-cloud = PointCloud()
-cloud.add_point(p1)
-cloud.add_point(p2)
-
-# Retrieve points
-point = cloud.get_point(0)           # Fast index-based access
-point = cloud.get_point_by_id(2)     # ID-based lookup
-```
+3. **Thread Safety**
+   - Immutable points prevent race conditions
+   - Safe for parallel processing
+   - No need for point-level locking
 
 ## Memory Usage Analysis
 
@@ -173,36 +150,17 @@ Compare this to a naive implementation using regular Python objects, which would
 - ~120+ bytes per point (with `__dict__`)
 - ~120MB+ for 1M points
 
-## Performance Considerations
+## Optimizations
 
-1. **Cache Efficiency**
-   - Contiguous memory layout improves CPU cache utilization
-   - Sequential access patterns benefit from hardware prefetching
-   - Minimal cache misses due to packed storage
+### Point Storage
 
-2. **Memory Bandwidth**
-   - Reduced memory bandwidth requirements
-   - Efficient data transfer between memory and CPU
-   - Better performance for large datasets
+- **Coordinate Quantization**: Store coordinates as integers with a fixed precision, reducing memory usage.
+- **HDF5 Compression**: Use GZIP compression to reduce storage size.
 
-3. **Thread Safety**
-   - Immutable points prevent race conditions
-   - Safe for parallel processing
-   - No need for point-level locking
+### Spatial Indexing
 
-## Best Practices
+- **KD-tree**: Use a KD-tree data structure for efficient nearest neighbor queries and radius searches.
 
-1. **Access Patterns**
-   - Prefer index-based access over ID-based lookup
-   - Process points sequentially when possible
-   - Consider bulk operations for better performance
+### Data Persistence
 
-2. **Memory Management**
-   - Monitor memory usage for very large datasets
-   - Use serialization for persistent storage
-   - Consider chunking for massive terrains
-
-3. **Optimization Tips**
-   - Profile memory usage and access patterns
-   - Use numpy for numerical operations on point clouds
-   - Consider spatial indexing for proximity queries
+- **HDF5 Storage**: Use HDF5 files for storing large terrains, enabling efficient compression and random access.

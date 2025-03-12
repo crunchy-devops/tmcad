@@ -1,3 +1,5 @@
-psutil>=5.9.2  # For memory usage monitoring
-numpy>=1.24.0   # Optional: For numerical operations on point clouds
-pytest>=7.4.0   # For running tests
+numpy>=1.24.0        # For efficient array operations and serialization
+scipy>=1.11.0        # For KD-tree spatial indexing
+h5py>=3.9.0         # For HDF5 storage
+psutil>=5.9.2       # For memory usage monitoring
+pytest>=7.4.0       # For running tests
