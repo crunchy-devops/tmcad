@@ -1,0 +1,3 @@
+psutil>=5.9.2  # For memory usage monitoring
+numpy>=1.24.0   # Optional: For numerical operations on point clouds
+pytest>=7.4.0   # For running tests
