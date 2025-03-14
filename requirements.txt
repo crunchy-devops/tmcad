@@ -1,0 +1,8 @@
+numpy>=1.26.0
+scipy>=1.11.0
+ezdxf>=1.1.0
+h5py>=3.10.0
+Flask>=3.0.0
+plotly>=5.18.0
+matplotlib>=3.8.0
+SQLAlchemy>=2.0.0

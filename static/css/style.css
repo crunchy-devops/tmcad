@@ -1,0 +1,193 @@
+:root {
+    --sidebar-width: 300px;
+    --primary-color: #2c3e50;
+    --secondary-color: #34495e;
+    --accent-color: #3498db;
+    --text-color: #ecf0f1;
+    --background-color: #1a1a1a;
+    --header-height: 60px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    min-height: 100vh;
+}
+
+.container {
+    display: flex;
+    height: 100vh;
+}
+
+.sidebar {
+    width: var(--sidebar-width);
+    background-color: var(--primary-color);
+    padding: 20px;
+    overflow-y: auto;
+    position: fixed;
+    border-right: 1px solid #dee2e6;
+}
+
+.main-content {
+    margin-left: var(--sidebar-width);
+    height: 100vh;
+    overflow-y: auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.view-controls {
+    padding: 10px;
+    background-color: var(--secondary-color);
+    display: flex;
+    gap: 10px;
+}
+
+#terrain-view {
+    flex: 1;
+    background-color: var(--background-color);
+    position: relative;
+    width: 100%;
+    height: calc(100vh - var(--header-height));
+    background: #f8f9fa;
+}
+
+button {
+    background-color: var(--accent-color);
+    color: var(--text-color);
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+button:hover {
+    background-color: #2980b9;
+}
+
+button:disabled {
+    background-color: #95a5a6;
+    cursor: not-allowed;
+}
+
+.upload-section {
+    margin: 20px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#terrain-list {
+    margin: 20px 0;
+}
+
+.terrain-item {
+    background-color: var(--secondary-color);
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    margin-bottom: 0.5rem;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.terrain-item:hover {
+    background-color: var(--accent-color);
+    background: #e9ecef;
+}
+
+.terrain-item.active {
+    background-color: var(--accent-color);
+    background: #0d6efd;
+    color: white;
+    border-color: #0a58ca;
+}
+
+.terrain-info {
+    margin: 20px 0;
+}
+
+.break-line-controls {
+    margin: 20px 0;
+}
+
+h2, h3 {
+    margin-bottom: 10px;
+    color: var(--text-color);
+}
+
+#terrain-stats {
+    background-color: var(--secondary-color);
+    padding: 10px;
+    border-radius: 4px;
+}
+
+.stats-table {
+    width: 100%;
+    margin-bottom: 1rem;
+}
+
+.stats-table td {
+    padding: 0.5rem;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.stats-table td:first-child {
+    font-weight: 500;
+    color: #6c757d;
+}
+
+input[type="file"] {
+    background-color: var(--secondary-color);
+    padding: 8px;
+    border-radius: 4px;
+    width: 100%;
+    color: var(--text-color);
+}
+
+.loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+}
+
+.loading-spinner {
+    width: 3rem;
+    height: 3rem;
+}
+
+@media (max-width: 768px) {
+    .sidebar {
+        position: static;
+        height: auto;
+        width: 100%;
+    }
+    
+    .main-content {
+        margin-left: 0;
+        height: auto;
+    }
+    
+    #terrain-view {
+        height: 70vh;
+    }
+}
