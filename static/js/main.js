@@ -35,6 +35,19 @@ const modelNameInput = document.getElementById('model-name');
 const terrainList = document.getElementById('terrain-list');
 const terrainStats = document.getElementById('terrain-stats');
 const alertContainer = document.getElementById('alert-container');
+const loadingOverlay = document.getElementById('loading-overlay');
+const terrainPlot = document.getElementById('terrain-plot');
+const debugPanel = document.getElementById('debugPanel');
+
+// Debug logging function
+function debugLog(message) {
+    const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+    const logEntry = document.createElement('div');
+    logEntry.textContent = `${timestamp} ${message}`;
+    debugPanel.appendChild(logEntry);
+    debugPanel.scrollTop = debugPanel.scrollHeight;
+    console.log(message);
+}
 
 // Alert System
 function showAlert(message, type = 'info', duration = 5000) {
@@ -53,6 +66,41 @@ function showAlert(message, type = 'info', duration = 5000) {
             bsAlert.close();
         }
     }, duration);
+    debugLog(`Alert shown: ${message} (${type})`);
+}
+
+// Function to show loading overlay
+function showLoading() {
+    loadingOverlay.style.display = 'flex';
+    debugLog('Loading overlay shown');
+}
+
+// Function to hide loading overlay
+function hideLoading() {
+    loadingOverlay.style.display = 'none';
+    debugLog('Loading overlay hidden');
+}
+
+// Function to format terrain statistics
+function formatTerrainStats(stats) {
+    const bounds = stats.bounds;
+    return `
+        <div class="mb-3">
+            <h6>Point Count</h6>
+            <p class="mb-2">${stats.point_count} points</p>
+            
+            <h6>Terrain Bounds</h6>
+            <p class="mb-1">X: ${bounds.min_x.toFixed(2)} to ${bounds.max_x.toFixed(2)} (${(bounds.max_x - bounds.min_x).toFixed(2)} units)</p>
+            <p class="mb-1">Y: ${bounds.min_y.toFixed(2)} to ${bounds.max_y.toFixed(2)} (${(bounds.max_y - bounds.min_y).toFixed(2)} units)</p>
+            <p class="mb-2">Z: ${bounds.min_z.toFixed(2)} to ${bounds.max_z.toFixed(2)} (${(bounds.max_z - bounds.min_z).toFixed(2)} units)</p>
+            
+            <h6>Surface Analysis</h6>
+            <p class="mb-1">Mean Slope: ${stats.mean_slope}°</p>
+            <p class="mb-1">Max Slope: ${stats.max_slope}°</p>
+            <p class="mb-1">Surface Area: ${stats.surface_area.toFixed(2)} square units</p>
+            <p class="mb-1">Volume above z=0: ${stats.volume.toFixed(2)} cubic units</p>
+        </div>
+    `;
 }
 
 // File Upload Handler
@@ -62,11 +110,13 @@ async function uploadDXF() {
 
     if (!file) {
         showAlert('Please select a DXF file first', 'warning');
+        debugLog('No file selected');
         return;
     }
 
     if (!file.name.toLowerCase().endsWith('.dxf')) {
         showAlert('Please select a valid DXF file', 'warning');
+        debugLog('Invalid file type');
         return;
     }
 
@@ -78,6 +128,8 @@ async function uploadDXF() {
 
     try {
         uploadButton.disabled = true;
+        showLoading();
+        debugLog(`Sending request to /api/terrain/import with file: ${file.name}`);
         showAlert('Importing DXF file...', 'info');
 
         const response = await fetch('/api/terrain/import', {
@@ -85,27 +137,33 @@ async function uploadDXF() {
             body: formData
         });
 
+        debugLog('Received response from server');
         const result = await response.json();
+        debugLog(`Response data: ${JSON.stringify(result)}`);
 
         if (!response.ok) {
             throw new Error(result.error || 'Failed to import DXF file');
         }
 
         showAlert('DXF file imported successfully!', 'success');
+        debugLog('Import completed successfully');
         await loadTerrainList();
         fileInput.value = '';
         modelNameInput.value = '';
     } catch (error) {
+        debugLog(`Error: ${error.message}`);
         console.error('Upload error:', error);
         showAlert(error.message, 'danger');
     } finally {
         uploadButton.disabled = false;
+        hideLoading();
     }
 }
 
 // Load terrain list
 async function loadTerrainList() {
     try {
+        debugLog('Sending request to /api/terrain/list');
         const response = await fetch('/api/terrain/list');
         const terrains = await response.json();
 
@@ -124,8 +182,10 @@ async function loadTerrainList() {
             };
             terrainList.appendChild(item);
         });
+        debugLog('Terrain list loaded');
     } catch (error) {
         console.error('Failed to update terrain list:', error);
+        debugLog(`Error: ${error.message}`);
         showAlert('Failed to load terrain list', 'danger');
     }
 }
@@ -133,6 +193,7 @@ async function loadTerrainList() {
 // Load and display terrain
 async function loadTerrain(name) {
     try {
+        debugLog(`Sending request to /api/terrain/${name}`);
         const response = await fetch(`/api/terrain/${name}`);
         if (!response.ok) {
             throw new Error('Failed to load terrain');
@@ -167,38 +228,16 @@ async function loadTerrain(name) {
 
         // Update plot
         Plotly.newPlot('plot', data, plotLayout);
+        debugLog('Terrain plot updated');
 
         // Update stats display
-        updateTerrainStats(terrain);
+        terrainStats.innerHTML = formatTerrainStats(terrain.stats);
+        debugLog('Terrain stats updated');
     } catch (error) {
         console.error('Failed to load terrain:', error);
+        debugLog(`Error: ${error.message}`);
         showAlert('Failed to load terrain data', 'danger');
     }
-}
-
-function updateTerrainStats(terrain) {
-    terrainStats.innerHTML = `
-        <table class="table table-sm">
-            <tbody>
-                <tr>
-                    <th>Name:</th>
-                    <td>${terrain.name}</td>
-                </tr>
-                <tr>
-                    <th>Points:</th>
-                    <td>${terrain.point_count}</td>
-                </tr>
-                <tr>
-                    <th>Bounds:</th>
-                    <td>
-                        X: ${terrain.bounds.min_x.toFixed(2)} to ${terrain.bounds.max_x.toFixed(2)}<br>
-                        Y: ${terrain.bounds.min_y.toFixed(2)} to ${terrain.bounds.max_y.toFixed(2)}<br>
-                        Z: ${terrain.bounds.min_z.toFixed(2)} to ${terrain.bounds.max_z.toFixed(2)}
-                    </td>
-                </tr>
-            </tbody>
-        </table>
-    `;
 }
 
 // Delete terrain
@@ -208,6 +247,7 @@ async function deleteTerrain(name) {
     }
 
     try {
+        debugLog(`Sending request to /api/terrain/${name}`);
         const response = await fetch(`/api/terrain/${name}`, {
             method: 'DELETE'
         });
@@ -217,6 +257,7 @@ async function deleteTerrain(name) {
         }
 
         showAlert(`Deleted terrain "${name}"`, 'success');
+        debugLog(`Terrain "${name}" deleted`);
 
         // Clear plot if deleted terrain was displayed
         if (currentTerrain && currentTerrain.name === name) {
@@ -229,12 +270,13 @@ async function deleteTerrain(name) {
         await loadTerrainList();
     } catch (error) {
         console.error('Failed to delete terrain:', error);
+        debugLog(`Error: ${error.message}`);
         showAlert(`Failed to delete terrain "${name}"`, 'danger');
     }
 }
 
 // Show loading indicator
-function showLoading() {
+function showLoadingIndicator() {
     const loading = document.createElement('div');
     loading.className = 'loading';
     loading.innerHTML = `
@@ -244,18 +286,21 @@ function showLoading() {
         <p class="mt-3 text-muted">Processing terrain data...</p>
     `;
     document.getElementById('terrain-view').appendChild(loading);
+    debugLog('Loading indicator shown');
 }
 
 // Hide loading indicator
-function hideLoading() {
+function hideLoadingIndicator() {
     const loading = document.querySelector('.loading');
     if (loading) loading.remove();
+    debugLog('Loading indicator hidden');
 }
 
 // Show elevation plot
 function showElevationPlot() {
     if (!currentTerrain) {
         showAlert('Please load a terrain model first', 'warning');
+        debugLog('No terrain loaded');
         return;
     }
 
@@ -290,12 +335,14 @@ function showElevationPlot() {
     plotView.classList.remove('d-none');
 
     Plotly.newPlot('plot-view', data, layout);
+    debugLog('Elevation plot shown');
 }
 
 // Show slope analysis plot
 function showSlopePlot() {
     if (!currentTerrain) {
         showAlert('Please load a terrain model first', 'warning');
+        debugLog('No terrain loaded');
         return;
     }
 
@@ -331,6 +378,7 @@ function showSlopePlot() {
     plotView.classList.remove('d-none');
 
     Plotly.newPlot('plot-view', data, layout);
+    debugLog('Slope plot shown');
 }
 
 // Toggle 3D/2D view
@@ -338,6 +386,7 @@ function toggle3DView() {
     is3DView = !is3DView;
     document.getElementById('terrain-view').classList.toggle('d-none', !is3DView);
     document.getElementById('plot-view').classList.toggle('d-none', is3DView);
+    debugLog(`3D view toggled: ${is3DView}`);
 }
 
 // Reset view
@@ -350,6 +399,7 @@ function resetView() {
         // Reset plot view
         showElevationPlot();
     }
+    debugLog('View reset');
 }
 
 // Update statistics display
@@ -389,12 +439,14 @@ function updateStats() {
             </tbody>
         </table>
     `;
+    debugLog('Statistics updated');
 }
 
 // Event Listeners
 uploadButton.addEventListener('click', uploadDXF);
 
 // Initial load
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
+    debugLog('Application initialized');
     loadTerrainList();
 });

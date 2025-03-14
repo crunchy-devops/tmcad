@@ -4,6 +4,7 @@ from scipy.spatial import Delaunay, cKDTree
 import json
 from typing import List, Tuple, Optional, Set, Dict
 from point3d import Point3D, PointCloud
+import logging
 
 class TerrainModel:
     """Manages terrain point cloud with geometric operations and analysis capabilities."""
@@ -196,14 +197,17 @@ class TerrainModel:
             projected_areas = np.abs(np.cross(v1[:, :2], v2[:, :2])) / 2
             volumes = projected_areas * avg_heights  # Volume of each prism
             
+            # Update statistics
             self._stats.update({
                 'mean_slope': float(mean_slope),
                 'max_slope': float(np.max(slopes_deg)),
                 'surface_area': float(np.sum(areas)),
                 'volume': float(np.sum(volumes))
             })
+            
         except Exception as e:
-            print(f"Warning: Failed to compute surface metrics: {str(e)}")
+            # Log error and set default values
+            logging.error(f"Error computing surface metrics: {str(e)}")
             self._stats.update({
                 'mean_slope': 0.0,
                 'max_slope': 0.0,

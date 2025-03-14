@@ -1,117 +1,84 @@
-from __future__ import annotations
-import ezdxf
 import logging
-from typing import Optional, List, Dict, Set
-from point3d import Point3D
+import ezdxf
+import numpy as np
+from typing import List, Optional, Set, Dict, Tuple
 from terrain_model import TerrainModel
+from point3d import Point3D, PointCloud
 
 class DXFImporter:
-    """Imports terrain data from DXF files with memory-efficient point handling."""
-    
-    def __init__(self):
-        """Initialize DXF importer with default settings."""
-        self.logger = logging.getLogger(__name__)
-        self._next_point_id = 1
-        self._processed_points: Set[tuple] = set()  # Track unique points by coordinates
+    """Import terrain data from DXF files."""
 
-    def import_terrain(self, file_path: str, model_name: Optional[str] = None) -> TerrainModel:
-        """
-        Import terrain data from DXF file.
-        
-        Args:
-            file_path: Path to DXF file
-            model_name: Optional name for terrain model, defaults to filename
-            
-        Returns:
-            TerrainModel containing imported terrain data
-            
-        Raises:
-            ValueError: If file cannot be read or contains no valid terrain data
-        """
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+
+    def get_layers(self, file_path: str) -> List[str]:
+        """Get list of available layers in the DXF file."""
         try:
-            # Open and validate DXF file
+            doc = ezdxf.readfile(file_path)
+            layers = [layer.dxf.name for layer in doc.layers]
+            self.logger.info(f"Found {len(layers)} layers in {file_path}")
+            return layers
+        except Exception as e:
+            self.logger.error(f"Error reading layers from DXF: {str(e)}")
+            raise ValueError(f"Failed to read DXF file: {str(e)}")
+
+    def import_terrain(self, file_path: str, model_name: str, layers: Optional[List[str]] = None) -> TerrainModel:
+        """Import terrain from DXF file with specified layers."""
+        if not model_name:
+            raise ValueError("Model name is required")
+
+        try:
             doc = ezdxf.readfile(file_path)
             msp = doc.modelspace()
             
-            # Extract or generate model name
-            if not model_name:
-                model_name = file_path.split('\\')[-1].replace('.dxf', '')
-            
             # Create terrain model
             terrain = TerrainModel(model_name)
+            points_added = set()
             
-            # Process entities by type
-            self._process_points(msp, terrain)
-            self._process_3dfaces(msp, terrain)
-            self._process_polylines(msp, terrain)
+            # If no layers specified, use all layers
+            if not layers:
+                layers = [layer.dxf.name for layer in doc.layers]
+            
+            self.logger.info(f"Importing terrain from layers: {layers}")
+            
+            # Process each entity in specified layers
+            for entity in msp:
+                if entity.dxf.layer not in layers:
+                    continue
+                    
+                if entity.dxftype() == 'POINT':
+                    x, y, z = entity.dxf.location
+                    if (x, y, z) not in points_added:
+                        terrain.add_point(x, y, z)
+                        points_added.add((x, y, z))
+                        
+                elif entity.dxftype() == 'LINE':
+                    start = entity.dxf.start
+                    end = entity.dxf.end
+                    if (start.x, start.y, start.z) not in points_added:
+                        terrain.add_point(start.x, start.y, start.z)
+                        points_added.add((start.x, start.y, start.z))
+                    if (end.x, end.y, end.z) not in points_added:
+                        terrain.add_point(end.x, end.y, end.z)
+                        points_added.add((end.x, end.y, end.z))
+                        
+                elif entity.dxftype() == '3DFACE':
+                    for i in range(4):
+                        point = (entity.dxf.vtx0, entity.dxf.vtx1, 
+                               entity.dxf.vtx2, entity.dxf.vtx3)[i]
+                        if (point.x, point.y, point.z) not in points_added:
+                            terrain.add_point(point.x, point.y, point.z)
+                            points_added.add((point.x, point.y, point.z))
             
             if len(terrain.points) == 0:
-                raise ValueError("No valid terrain points found in DXF file")
+                raise ValueError(f"No points found in layers: {layers}")
                 
-            self.logger.info(f"Successfully imported {len(terrain.points)} points from {file_path}")
+            # Compute surface metrics
+            terrain.compute_surface_metrics()
+            
+            self.logger.info(f"Successfully imported {len(terrain.points)} points from {len(layers)} layers")
             return terrain
             
-        except ezdxf.DXFError as e:
-            error_msg = f"Failed to read DXF file {file_path}: {str(e)}"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
         except Exception as e:
-            error_msg = f"Error importing terrain from {file_path}: {str(e)}"
-            self.logger.error(error_msg)
-            raise ValueError(error_msg)
-        finally:
-            # Clear processed points set to free memory
-            self._processed_points.clear()
-
-    def _add_point(self, terrain: TerrainModel, x: float, y: float, z: float) -> None:
-        """
-        Add point to terrain model if not already processed.
-        Uses coordinate-based deduplication.
-        """
-        # Round coordinates for stable comparison
-        rx, ry, rz = round(x, 6), round(y, 6), round(z, 6)
-        point_key = (rx, ry, rz)
-        
-        if point_key not in self._processed_points:
-            self._processed_points.add(point_key)
-            point = Point3D(id=self._next_point_id, x=x, y=y, z=z)
-            terrain.add_point(point)
-            self._next_point_id += 1
-
-    def _process_points(self, msp, terrain: TerrainModel) -> None:
-        """Process POINT entities."""
-        for point in msp.query('POINT'):
-            x, y, z = point.dxf.location
-            self._add_point(terrain, x, y, z)
-
-    def _process_3dfaces(self, msp, terrain: TerrainModel) -> None:
-        """Process 3DFACE entities."""
-        for face in msp.query('3DFACE'):
-            # Get unique vertices (some may be duplicated for triangles)
-            vertices = set()
-            for i in range(4):
-                vertex = getattr(face.dxf, f'vtx{i}')
-                if vertex != (0, 0, 0):  # Skip null vertices
-                    vertices.add((vertex[0], vertex[1], vertex[2]))
-            
-            # Add vertices as points
-            for x, y, z in vertices:
-                self._add_point(terrain, x, y, z)
-
-    def _process_polylines(self, msp, terrain: TerrainModel) -> None:
-        """Process POLYLINE and LWPOLYLINE entities."""
-        # Process regular polylines
-        for pline in msp.query('POLYLINE'):
-            if pline.dxf.flags & 8:  # 3D polyline
-                for vertex in pline.points():
-                    x, y, z = vertex
-                    self._add_point(terrain, x, y, z)
-        
-        # Process lightweight polylines
-        for lwpline in msp.query('LWPOLYLINE'):
-            # LWPOLYLINE vertices are always 2D, skip if no elevation
-            if hasattr(lwpline.dxf, 'elevation'):
-                z = lwpline.dxf.elevation
-                for vertex in lwpline.get_points():
-                    x, y = vertex[:2]
-                    self._add_point(terrain, x, y, z)
+            self.logger.error(f"Error importing terrain: {str(e)}")
+            raise ValueError(f"Failed to import terrain: {str(e)}")

@@ -2,6 +2,9 @@ from __future__ import annotations
 import os
 import json
 import logging
+import struct
+import numpy as np
+from datetime import datetime
 from typing import Dict, List, Optional, Set
 from terrain_model import TerrainModel
 from point3d import Point3D, PointCloud
@@ -26,78 +29,96 @@ class Database:
         os.makedirs(os.path.join(self.base_dir, 'metadata'), exist_ok=True)
 
     def save_terrain(self, terrain: TerrainModel) -> None:
-        """
-        Save terrain model using binary format for points and JSON for metadata.
-        Points are stored separately from metadata for memory efficiency.
-        """
-        try:
-            # Save points in binary format
-            points_path = os.path.join(self.base_dir, 'points', f'{terrain.name}.bin')
-            with open(points_path, 'wb') as f:
-                f.write(terrain.points.to_bytes())
+        """Save a terrain model to the database."""
+        if not terrain.name:
+            raise ValueError("Terrain model must have a name")
+        
+        # Create data directory if it doesn't exist
+        os.makedirs(self.base_dir, exist_ok=True)
+        
+        # Save points to binary file
+        points_path = os.path.join(self.base_dir, 'points', f"{terrain.name}.bin")
+        os.makedirs(os.path.dirname(points_path), exist_ok=True)
+        
+        # Save points using array-based storage for efficiency
+        points_array = terrain.points.get_points_array()
+        point_ids = list(terrain.points._id_to_index.keys())
+        
+        with open(points_path, 'wb') as f:
+            # Save number of points
+            f.write(struct.pack('Q', len(point_ids)))
             
-            # Save metadata (everything except points) as JSON
-            metadata = {
-                'name': terrain.name,
-                'stats': terrain.get_stats(),
-                'break_lines': terrain._break_lines
-            }
-            
-            metadata_path = os.path.join(self.base_dir, 'metadata', f'{terrain.name}.json')
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
-            
-            # Update cache
-            self._terrain_cache[terrain.name] = terrain
-            self._trim_cache()
-            
-            self.logger.info(f"Saved terrain {terrain.name} with {len(terrain.points)} points")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to save terrain {terrain.name}: {str(e)}")
-            raise
+            # Save point IDs
+            for pid in point_ids:
+                f.write(struct.pack('Q', pid))
+                
+            # Save point coordinates as doubles
+            points_array.tofile(f)
+        
+        # Save metadata
+        metadata_path = os.path.join(self.base_dir, 'metadata', f"{terrain.name}.json")
+        os.makedirs(os.path.dirname(metadata_path), exist_ok=True)
+        
+        metadata = {
+            'name': terrain.name,
+            'stats': terrain.get_stats(),
+            'created_at': datetime.now().isoformat()
+        }
+        
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
 
+        # Update cache
+        self._terrain_cache[terrain.name] = terrain
+        self._trim_cache()
+        
+        self.logger.info(f"Saved terrain {terrain.name} with {len(terrain.points)} points")
+        
     def load_terrain(self, name: str) -> Optional[TerrainModel]:
-        """
-        Load terrain model from storage.
-        Uses caching to avoid reloading frequently accessed terrains.
-        """
+        """Load a terrain model from the database."""
         try:
-            # Check cache first
-            if name in self._terrain_cache:
-                self.logger.debug(f"Cache hit for terrain {name}")
-                return self._terrain_cache[name]
+            # Check paths
+            points_path = os.path.join(self.base_dir, 'points', f"{name}.bin")
+            metadata_path = os.path.join(self.base_dir, 'metadata', f"{name}.json")
             
-            # Load metadata
-            metadata_path = os.path.join(self.base_dir, 'metadata', f'{name}.json')
-            if not os.path.exists(metadata_path):
+            if not os.path.exists(points_path) or not os.path.exists(metadata_path):
+                logging.error(f"Terrain not found: {name}")
+                logging.debug(f"Points path exists: {os.path.exists(points_path)}")
+                logging.debug(f"Metadata path exists: {os.path.exists(metadata_path)}")
                 return None
                 
+            # Load metadata
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
-            
+                
+            # Load points
+            with open(points_path, 'rb') as f:
+                # Read number of points
+                num_points = struct.unpack('Q', f.read(8))[0]
+                
+                # Read point IDs
+                point_ids = [struct.unpack('Q', f.read(8))[0] for _ in range(num_points)]
+                
+                # Read point coordinates
+                points_array = np.fromfile(f, dtype=np.float64)
+                points_array = points_array.reshape(-1, 3)
+                
             # Create terrain model
             terrain = TerrainModel(name)
             
-            # Load points from binary file
-            points_path = os.path.join(self.base_dir, 'points', f'{name}.bin')
-            if os.path.exists(points_path):
-                with open(points_path, 'rb') as f:
-                    terrain.points = PointCloud.from_bytes(f.read())
+            # Add points efficiently
+            for i, (pid, point) in enumerate(zip(point_ids, points_array)):
+                terrain.points._id_to_index[pid] = i
+                terrain.points._coordinates.extend([point[0], point[1], point[2]])
+                
+            # Update stats from metadata
+            terrain._stats.update(metadata['stats'])
             
-            # Add break lines
-            for break_line in metadata.get('break_lines', []):
-                terrain.add_break_line(break_line)
-            
-            # Update cache
-            self._terrain_cache[name] = terrain
-            self._trim_cache()
-            
-            self.logger.info(f"Loaded terrain {name} with {len(terrain.points)} points")
+            logging.info(f"Successfully loaded terrain: {name} with {num_points} points")
             return terrain
             
         except Exception as e:
-            self.logger.error(f"Failed to load terrain {name}: {str(e)}")
+            logging.error(f"Error loading terrain {name}: {str(e)}", exc_info=True)
             return None
 
     def delete_terrain(self, name: str) -> bool:
@@ -107,8 +128,8 @@ class Database:
             self._terrain_cache.pop(name, None)
             
             # Delete files
-            points_path = os.path.join(self.base_dir, 'points', f'{name}.bin')
-            metadata_path = os.path.join(self.base_dir, 'metadata', f'{name}.json')
+            points_path = os.path.join(self.base_dir, 'points', f"{name}.bin")
+            metadata_path = os.path.join(self.base_dir, 'metadata', f"{name}.json")
             
             deleted = False
             if os.path.exists(points_path):
