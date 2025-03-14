@@ -10,6 +10,9 @@ class DXFImporter:
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+        # Set debug level for more detailed logging
+        self.logger.setLevel(logging.DEBUG)
+        self._next_point_id = 1
 
     def get_layers(self, file_path: str) -> List[str]:
         """Get list of available layers in the DXF file."""
@@ -42,128 +45,95 @@ class DXFImporter:
             self.logger.error(f"Error reading layers from DXF: {str(e)}")
             raise ValueError(f"Failed to read DXF file: {str(e)}")
 
-    def _extract_point_coordinates(self, entity) -> Optional[Tuple[float, float, float]]:
-        """Extract point coordinates from an entity using various methods."""
+    def _extract_text_elevation(self, text_entity) -> Optional[Tuple[float, float, float]]:
+        """Extract point coordinates from a TEXT entity."""
         try:
-            # Special handling for TEXT entities
-            if entity.dxftype() in ('TEXT', 'MTEXT'):
-                # Get text position
-                x = y = z = None
+            # Get x,y coordinates from insert point
+            if hasattr(text_entity, 'dxf') and hasattr(text_entity.dxf, 'insert'):
+                point = text_entity.dxf.insert
+                # Handle both tuple/list and DXF point types
+                try:
+                    x = float(point[0])
+                    y = float(point[1])
+                    self.logger.debug(f"Using insert point coordinates: ({x}, {y})")
+                except (TypeError, IndexError) as e:
+                    self.logger.debug(f"Failed to extract insert point coordinates: {e}")
+                    return None
+            else:
+                self.logger.debug("Text entity missing insert point")
+                return None
+
+            # Get elevation from text content
+            if not hasattr(text_entity, 'dxf') or not hasattr(text_entity.dxf, 'text'):
+                self.logger.debug("Text entity missing text content")
+                return None
                 
-                # Try to get position from insert_point (TEXT) or insert (MTEXT)
-                if hasattr(entity.dxf, 'insert_point'):
-                    point = entity.dxf.insert_point
-                    if isinstance(point, (tuple, list)) and len(point) >= 2:
-                        x, y = point[:2]
-                        z = point[2] if len(point) > 2 else 0
-                elif hasattr(entity.dxf, 'insert'):
-                    point = entity.dxf.insert
-                    if isinstance(point, (tuple, list)) and len(point) >= 2:
-                        x, y = point[:2]
-                        z = point[2] if len(point) > 2 else 0
-                
-                # If we found x,y coordinates but no z, try to get z from text content
-                if x is not None and y is not None:
-                    if z is None:
-                        try:
-                            # Get text content
-                            text = entity.dxf.text if hasattr(entity.dxf, 'text') else None
-                            if text:
-                                # Try to parse z value from text
-                                # Remove common prefixes and handle different number formats
-                                text = text.replace(',', '.').strip()
-                                text = text.replace('Z=', '').replace('z=', '').strip()
-                                text = text.replace('H=', '').replace('h=', '').strip()
-                                text = text.replace('E=', '').replace('e=', '').strip()
-                                text = text.replace('N=', '').replace('n=', '').strip()
-                                z = float(text)
-                        except (ValueError, AttributeError):
-                            z = 0  # Default z value if text parsing fails
-                    
-                    return (x, y, z)
+            text = text_entity.dxf.text
+            if not text:
+                self.logger.debug("Empty text content")
+                return None
+
+            # Log raw text content for debugging
+            self.logger.debug(f"Raw text content: '{text}'")
+            self.logger.debug(f"Text bytes: {[ord(c) for c in text]}")
+
+            # Clean and parse the elevation value
+            # Remove any non-printable characters and whitespace
+            text = ''.join(c for c in text if c.isprintable()).strip()
+            self.logger.debug(f"After cleaning non-printable: '{text}'")
             
-            # Try different ways to get point coordinates
-            if hasattr(entity, 'get_points'):
-                points = entity.get_points()
-                if points and len(points) > 0:
-                    point = points[0]
-                    if isinstance(point, (tuple, list)) and len(point) >= 3:
-                        return tuple(point[:3])
+            # Clean up the text and handle decimal separator
+            text = text.replace(',', '.').strip()
+            self.logger.debug(f"After cleaning separators: '{text}'")
             
-            if hasattr(entity, 'coordinates'):
-                coords = entity.coordinates
-                if isinstance(coords, (tuple, list)) and len(coords) >= 3:
-                    return tuple(coords[:3])
-            
-            if hasattr(entity.dxf, 'location'):
-                loc = entity.dxf.location
-                if isinstance(loc, (tuple, list)) and len(loc) >= 3:
-                    return tuple(loc[:3])
-            
-            if all(hasattr(entity.dxf, attr) for attr in ['x', 'y', 'z']):
-                return (entity.dxf.x, entity.dxf.y, entity.dxf.z)
-            
-            # Special handling for TCPOINTENTITY
-            if entity.dxftype() == 'TCPOINTENTITY':
-                # Try to get coordinates from base class tags
-                if hasattr(entity, 'base_class'):
-                    for tag in entity.base_class:
-                        # Look for coordinate tags (group codes 10, 20, 30 for x,y,z)
-                        if isinstance(tag.value, (tuple, list)) and len(tag.value) >= 3:
-                            return tuple(tag.value[:3])
-                        elif tag.code == 10:  # X coordinate
-                            x = float(tag.value)
-                            # Look for Y and Z in subsequent tags
-                            for i, next_tag in enumerate(entity.base_class[entity.base_class.index(tag)+1:]):
-                                if next_tag.code == 20:  # Y coordinate
-                                    y = float(next_tag.value)
-                                    for z_tag in entity.base_class[entity.base_class.index(next_tag)+1:]:
-                                        if z_tag.code == 30:  # Z coordinate
-                                            z = float(z_tag.value)
-                                            return (x, y, z)
-                                    break
-                            break
-                
-                # Try to get coordinates from extended data
-                if hasattr(entity, 'xdata'):
-                    for tag in entity.xdata:
-                        if isinstance(tag.value, (tuple, list)) and len(tag.value) >= 3:
-                            return tuple(tag.value[:3])
-                
-                # Try to get coordinates from entity data
-                if hasattr(entity, 'data'):
-                    data = entity.data
-                    if isinstance(data, dict) and 'position' in data:
-                        pos = data['position']
-                        if isinstance(pos, (tuple, list)) and len(pos) >= 3:
-                            return tuple(pos[:3])
-                
-                # Try to get coordinates from extended tags
-                if hasattr(entity, 'xtags'):
-                    for tag in entity.xtags:
-                        if isinstance(tag.value, (tuple, list)) and len(tag.value) >= 3:
-                            return tuple(tag.value[:3])
-                        elif tag.code == 10:  # X coordinate
-                            x = float(tag.value)
-                            # Look for Y and Z in subsequent tags
-                            for i, next_tag in enumerate(entity.xtags[entity.xtags.index(tag)+1:]):
-                                if next_tag.code == 20:  # Y coordinate
-                                    y = float(next_tag.value)
-                                    for z_tag in entity.xtags[entity.xtags.index(next_tag)+1:]:
-                                        if z_tag.code == 30:  # Z coordinate
-                                            z = float(z_tag.value)
-                                            return (x, y, z)
-                                    break
-                            break
-            
-            return None
-            
+            # Try to parse as float - this will be our z value
+            try:
+                z = float(text)
+                self.logger.debug(f"Successfully parsed elevation {z} from text: '{text_entity.dxf.text}' at ({x:.2f}, {y:.2f})")
+                return (x, y, z)
+            except ValueError as ve:
+                self.logger.debug(f"Failed to parse elevation from text: '{text}', error: {str(ve)}")
+                return None
+
         except Exception as e:
-            self.logger.debug(f"Error extracting coordinates: {str(e)}")
+            self.logger.debug(f"Error extracting text elevation: {str(e)}")
             return None
 
-    def import_terrain(self, file_path: str, model_name: str, layers: Optional[List[str]] = None) -> TerrainModel:
-        """Import terrain from DXF file with specified layers."""
+    def _extract_point_elevation(self, point_entity) -> Optional[Tuple[float, float, float]]:
+        """Extract point coordinates from a TCPOINTENTITY."""
+        try:
+            # Get coordinates from point entity
+            if hasattr(point_entity, 'dxf'):
+                # Try to get coordinates from common attributes
+                coords = None
+                if hasattr(point_entity.dxf, 'location'):
+                    coords = point_entity.dxf.location
+                elif hasattr(point_entity.dxf, 'point'):
+                    coords = point_entity.dxf.point
+                elif hasattr(point_entity.dxf, 'position'):
+                    coords = point_entity.dxf.position
+                elif hasattr(point_entity.dxf, 'insert'):
+                    coords = point_entity.dxf.insert
+                
+                if coords:
+                    try:
+                        x = float(coords[0])
+                        y = float(coords[1])
+                        z = float(coords[2])
+                        self.logger.debug(f"Extracted point coordinates: ({x:.2f}, {y:.2f}, {z:.2f})")
+                        return (x, y, z)
+                    except (TypeError, IndexError) as e:
+                        self.logger.debug(f"Failed to extract point coordinates: {e}")
+                        return None
+                    
+            return None
+
+        except Exception as e:
+            self.logger.debug(f"Error extracting point coordinates: {str(e)}")
+            return None
+
+    def import_terrain(self, file_path: str, model_name: str, layer: str = 'z value TN') -> TerrainModel:
+        """Import terrain points from TEXT and TCPOINTENTITY entities in the specified layer."""
         if not model_name:
             raise ValueError("Model name is required")
 
@@ -175,74 +145,55 @@ class DXFImporter:
             terrain = TerrainModel(model_name)
             points_added = set()
             
-            # If no layers specified, use all layers
-            if not layers:
-                layers = self.get_layers(file_path)
+            # Query TEXT entities in the specified layer
+            text_entities = msp.query(f'TEXT[layer=="{layer}"]')
+            self.logger.info(f"Found {len(text_entities)} TEXT entities in layer '{layer}'")
             
-            self.logger.info(f"Importing terrain from layers: {layers}")
-            
-            # Process each entity in specified layers
-            for entity in msp:
+            # Process TEXT entities
+            for entity in text_entities:
                 try:
-                    # Try different ways to get layer information
-                    entity_layer = None
-                    if hasattr(entity.dxf, 'layer'):
-                        entity_layer = entity.dxf.layer
-                    elif hasattr(entity, 'layer'):
-                        entity_layer = entity.layer
-                    elif hasattr(entity, 'get_dxf_attrib'):
-                        entity_layer = entity.get_dxf_attrib('layer', None)
-                    
-                    if not entity_layer or entity_layer not in layers:
-                        continue
-                    
-                    # Log entity type and layer for debugging
-                    self.logger.debug(f"Processing {entity.dxftype()} in layer {entity_layer}")
-                        
-                    # Handle standard DXF entities
-                    if entity.dxftype() == 'POINT':
-                        x, y, z = entity.dxf.location
-                        if (x, y, z) not in points_added:
-                            terrain.add_point(x, y, z)
-                            points_added.add((x, y, z))
-                            
-                    elif entity.dxftype() == 'LINE':
-                        start = entity.dxf.start
-                        end = entity.dxf.end
-                        if (start.x, start.y, start.z) not in points_added:
-                            terrain.add_point(start.x, start.y, start.z)
-                            points_added.add((start.x, start.y, start.z))
-                        if (end.x, end.y, end.z) not in points_added:
-                            terrain.add_point(end.x, end.y, end.z)
-                            points_added.add((end.x, end.y, end.z))
-                            
-                    elif entity.dxftype() == '3DFACE':
-                        for i in range(4):
-                            point = (entity.dxf.vtx0, entity.dxf.vtx1, 
-                                   entity.dxf.vtx2, entity.dxf.vtx3)[i]
-                            if (point.x, point.y, point.z) not in points_added:
-                                terrain.add_point(point.x, point.y, point.z)
-                                points_added.add((point.x, point.y, point.z))
-                                
-                    # Handle text and other entities
-                    else:
-                        coords = self._extract_point_coordinates(entity)
-                        if coords and coords not in points_added:
-                            terrain.add_point(*coords)
-                            points_added.add(coords)
-                                
+                    coords = self._extract_text_elevation(entity)
+                    if coords:
+                        x, y, z = coords
+                        point_key = (round(x, 3), round(y, 3))  # Use rounded x,y as key to avoid floating point issues
+                        if point_key not in points_added:
+                            point = Point3D(id=self._next_point_id, x=x, y=y, z=z)
+                            self._next_point_id += 1
+                            terrain.add_point(point)
+                            points_added.add(point_key)
+                            self.logger.debug(f"Added point from TEXT at ({x:.2f}, {y:.2f}, {z:.2f})")
                 except Exception as e:
-                    # Log the error but continue processing other entities
-                    self.logger.debug(f"Error processing entity: {str(e)}")
+                    self.logger.debug(f"Error processing TEXT entity: {str(e)}")
+                    continue
+            
+            # Query TCPOINTENTITY entities in the specified layer
+            point_entities = msp.query(f'TCPOINTENTITY[layer=="{layer}"]')
+            self.logger.info(f"Found {len(point_entities)} TCPOINTENTITY entities in layer '{layer}'")
+            
+            # Process TCPOINTENTITY entities
+            for entity in point_entities:
+                try:
+                    coords = self._extract_point_elevation(entity)
+                    if coords:
+                        x, y, z = coords
+                        point_key = (round(x, 3), round(y, 3))  # Use rounded x,y as key
+                        if point_key not in points_added:
+                            point = Point3D(id=self._next_point_id, x=x, y=y, z=z)
+                            self._next_point_id += 1
+                            terrain.add_point(point)
+                            points_added.add(point_key)
+                            self.logger.debug(f"Added point from TCPOINTENTITY at ({x:.2f}, {y:.2f}, {z:.2f})")
+                except Exception as e:
+                    self.logger.debug(f"Error processing TCPOINTENTITY: {str(e)}")
                     continue
             
             if len(terrain.points) == 0:
-                raise ValueError(f"No points found in layers: {layers}")
+                raise ValueError(f"No valid elevation points found in layer: {layer}")
                 
             # Compute surface metrics
             terrain.compute_surface_metrics()
             
-            self.logger.info(f"Successfully imported {len(terrain.points)} points from {len(layers)} layers")
+            self.logger.info(f"Successfully imported {len(terrain.points)} points from layer '{layer}'")
             return terrain
             
         except Exception as e:

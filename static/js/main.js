@@ -1,452 +1,195 @@
-// Global state
-let currentTerrain = null;
-let is3DView = true;
+// Main JavaScript file for terrain visualization
 
-// Initialize Plotly layout defaults
-const plotlyDefaults = {
-    layout: {
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)',
-        margin: { l: 50, r: 20, t: 30, b: 50 },
-        font: { family: 'system-ui' }
-    }
-};
-
-// Initialize Plotly.js 3D surface plot
-let plotLayout = {
-    title: 'Terrain Visualization',
-    scene: {
-        camera: {
-            eye: { x: 1.5, y: 1.5, z: 1.5 }
-        },
-        aspectmode: 'data',
-        xaxis: { title: 'X (m)' },
-        yaxis: { title: 'Y (m)' },
-        zaxis: { title: 'Z (m)' }
-    },
-    showlegend: true,
-    margin: { l: 0, r: 0, b: 0, t: 30 }
-};
-
-// DOM Elements
-const uploadButton = document.getElementById('upload-button');
-const fileInput = document.getElementById('dxf-file');
-const modelNameInput = document.getElementById('model-name');
-const terrainList = document.getElementById('terrain-list');
-const terrainStats = document.getElementById('terrain-stats');
-const alertContainer = document.getElementById('alert-container');
-const loadingOverlay = document.getElementById('loading-overlay');
-const terrainPlot = document.getElementById('terrain-plot');
-const debugPanel = document.getElementById('debugPanel');
-
-// Debug logging function
-function debugLog(message) {
-    const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
-    const logEntry = document.createElement('div');
-    logEntry.textContent = `${timestamp} ${message}`;
-    debugPanel.appendChild(logEntry);
-    debugPanel.scrollTop = debugPanel.scrollHeight;
-    console.log(message);
-}
-
-// Alert System
-function showAlert(message, type = 'info', duration = 5000) {
-    const alertDiv = document.createElement('div');
-    alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
-    alertDiv.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    `;
-    alertContainer.appendChild(alertDiv);
-
-    // Auto-dismiss after duration
-    setTimeout(() => {
-        if (alertDiv.parentNode === alertContainer) {
-            const bsAlert = new bootstrap.Alert(alertDiv);
-            bsAlert.close();
-        }
-    }, duration);
-    debugLog(`Alert shown: ${message} (${type})`);
-}
-
-// Function to show loading overlay
-function showLoading() {
-    loadingOverlay.style.display = 'flex';
-    debugLog('Loading overlay shown');
-}
-
-// Function to hide loading overlay
-function hideLoading() {
-    loadingOverlay.style.display = 'none';
-    debugLog('Loading overlay hidden');
-}
-
-// Function to format terrain statistics
-function formatTerrainStats(stats) {
-    const bounds = stats.bounds;
-    return `
-        <div class="mb-3">
-            <h6>Point Count</h6>
-            <p class="mb-2">${stats.point_count} points</p>
-            
-            <h6>Terrain Bounds</h6>
-            <p class="mb-1">X: ${bounds.min_x.toFixed(2)} to ${bounds.max_x.toFixed(2)} (${(bounds.max_x - bounds.min_x).toFixed(2)} units)</p>
-            <p class="mb-1">Y: ${bounds.min_y.toFixed(2)} to ${bounds.max_y.toFixed(2)} (${(bounds.max_y - bounds.min_y).toFixed(2)} units)</p>
-            <p class="mb-2">Z: ${bounds.min_z.toFixed(2)} to ${bounds.max_z.toFixed(2)} (${(bounds.max_z - bounds.min_z).toFixed(2)} units)</p>
-            
-            <h6>Surface Analysis</h6>
-            <p class="mb-1">Mean Slope: ${stats.mean_slope}°</p>
-            <p class="mb-1">Max Slope: ${stats.max_slope}°</p>
-            <p class="mb-1">Surface Area: ${stats.surface_area.toFixed(2)} square units</p>
-            <p class="mb-1">Volume above z=0: ${stats.volume.toFixed(2)} cubic units</p>
-        </div>
-    `;
-}
-
-// File Upload Handler
-async function uploadDXF() {
-    const file = fileInput.files[0];
-    const modelName = modelNameInput.value.trim();
-
-    if (!file) {
-        showAlert('Please select a DXF file first', 'warning');
-        debugLog('No file selected');
-        return;
-    }
-
-    if (!file.name.toLowerCase().endsWith('.dxf')) {
-        showAlert('Please select a valid DXF file', 'warning');
-        debugLog('Invalid file type');
-        return;
-    }
-
-    const formData = new FormData();
-    formData.append('file', file);
-    if (modelName) {
-        formData.append('model_name', modelName);
-    }
-
-    try {
-        uploadButton.disabled = true;
-        showLoading();
-        debugLog(`Sending request to /api/terrain/import with file: ${file.name}`);
-        showAlert('Importing DXF file...', 'info');
-
-        const response = await fetch('/api/terrain/import', {
-            method: 'POST',
-            body: formData
-        });
-
-        debugLog('Received response from server');
-        const result = await response.json();
-        debugLog(`Response data: ${JSON.stringify(result)}`);
-
-        if (!response.ok) {
-            throw new Error(result.error || 'Failed to import DXF file');
-        }
-
-        showAlert('DXF file imported successfully!', 'success');
-        debugLog('Import completed successfully');
-        await loadTerrainList();
-        fileInput.value = '';
-        modelNameInput.value = '';
-    } catch (error) {
-        debugLog(`Error: ${error.message}`);
-        console.error('Upload error:', error);
-        showAlert(error.message, 'danger');
-    } finally {
-        uploadButton.disabled = false;
-        hideLoading();
-    }
-}
-
-// Load terrain list
-async function loadTerrainList() {
-    try {
-        debugLog('Sending request to /api/terrain/list');
-        const response = await fetch('/api/terrain/list');
-        const terrains = await response.json();
-
-        terrainList.innerHTML = '';
-        terrains.terrains.forEach(terrain => {
-            const item = document.createElement('a');
-            item.href = '#';
-            item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
-            item.innerHTML = `
-                ${terrain.name}
-                <span class="badge bg-primary rounded-pill">${terrain.point_count} points</span>
-            `;
-            item.onclick = (e) => {
-                e.preventDefault();
-                loadTerrain(terrain.name);
-            };
-            terrainList.appendChild(item);
-        });
-        debugLog('Terrain list loaded');
-    } catch (error) {
-        console.error('Failed to update terrain list:', error);
-        debugLog(`Error: ${error.message}`);
-        showAlert('Failed to load terrain list', 'danger');
-    }
-}
-
-// Load and display terrain
-async function loadTerrain(name) {
-    try {
-        debugLog(`Sending request to /api/terrain/${name}`);
-        const response = await fetch(`/api/terrain/${name}`);
-        if (!response.ok) {
-            throw new Error('Failed to load terrain');
-        }
-
-        const terrain = await response.json();
-        currentTerrain = terrain;
-
-        // Extract point coordinates and slopes
-        const x = terrain.points.map(p => p.x);
-        const y = terrain.points.map(p => p.y);
-        const z = terrain.points.map(p => p.z);
-        const slopes = terrain.points.map(p => p.slope);
-
-        // Create surface plot with slope coloring
-        const data = [{
-            type: 'scatter3d',
-            mode: 'markers',
-            x: x,
-            y: y,
-            z: z,
-            marker: {
-                size: 3,
-                color: slopes,
-                colorscale: 'Viridis',
-                colorbar: {
-                    title: 'Slope (degrees)'
-                }
-            },
-            name: 'Terrain Points'
-        }];
-
-        // Update plot
-        Plotly.newPlot('plot', data, plotLayout);
-        debugLog('Terrain plot updated');
-
-        // Update stats display
-        terrainStats.innerHTML = formatTerrainStats(terrain.stats);
-        debugLog('Terrain stats updated');
-    } catch (error) {
-        console.error('Failed to load terrain:', error);
-        debugLog(`Error: ${error.message}`);
-        showAlert('Failed to load terrain data', 'danger');
-    }
-}
-
-// Delete terrain
-async function deleteTerrain(name) {
-    if (!confirm(`Are you sure you want to delete terrain "${name}"?`)) {
-        return;
-    }
-
-    try {
-        debugLog(`Sending request to /api/terrain/${name}`);
-        const response = await fetch(`/api/terrain/${name}`, {
-            method: 'DELETE'
-        });
-
-        if (!response.ok) {
-            throw new Error('Failed to delete terrain');
-        }
-
-        showAlert(`Deleted terrain "${name}"`, 'success');
-        debugLog(`Terrain "${name}" deleted`);
-
-        // Clear plot if deleted terrain was displayed
-        if (currentTerrain && currentTerrain.name === name) {
-            Plotly.purge('plot');
-            terrainStats.innerHTML = '';
-            currentTerrain = null;
-        }
-
-        // Refresh terrain list
-        await loadTerrainList();
-    } catch (error) {
-        console.error('Failed to delete terrain:', error);
-        debugLog(`Error: ${error.message}`);
-        showAlert(`Failed to delete terrain "${name}"`, 'danger');
-    }
-}
-
-// Show loading indicator
-function showLoadingIndicator() {
-    const loading = document.createElement('div');
-    loading.className = 'loading';
-    loading.innerHTML = `
-        <div class="spinner-border text-primary loading-spinner" role="status">
-            <span class="visually-hidden">Loading...</span>
-        </div>
-        <p class="mt-3 text-muted">Processing terrain data...</p>
-    `;
-    document.getElementById('terrain-view').appendChild(loading);
-    debugLog('Loading indicator shown');
-}
-
-// Hide loading indicator
-function hideLoadingIndicator() {
-    const loading = document.querySelector('.loading');
-    if (loading) loading.remove();
-    debugLog('Loading indicator hidden');
-}
-
-// Show elevation plot
-function showElevationPlot() {
-    if (!currentTerrain) {
-        showAlert('Please load a terrain model first', 'warning');
-        debugLog('No terrain loaded');
-        return;
-    }
-
-    const points = currentTerrain.points;
-    const bounds = currentTerrain.stats.bounds;
-
-    // Create elevation heatmap data
-    const data = [{
-        type: 'contour',
-        x: points.map(p => p.x), // x coordinate
-        y: points.map(p => p.y), // y coordinate
-        z: points.map(p => p.z), // z coordinate
-        colorscale: 'Viridis',
-        contours: {
-            coloring: 'heatmap'
-        },
-        colorbar: {
-            title: 'Elevation (m)'
-        }
-    }];
-
-    const layout = {
-        ...plotlyDefaults.layout,
-        title: 'Terrain Elevation',
-        xaxis: { title: 'X (m)' },
-        yaxis: { title: 'Y (m)' }
-    };
-
-    // Switch to plot view
-    document.getElementById('terrain-view').classList.add('d-none');
-    const plotView = document.getElementById('plot-view');
-    plotView.classList.remove('d-none');
-
-    Plotly.newPlot('plot-view', data, layout);
-    debugLog('Elevation plot shown');
-}
-
-// Show slope analysis plot
-function showSlopePlot() {
-    if (!currentTerrain) {
-        showAlert('Please load a terrain model first', 'warning');
-        debugLog('No terrain loaded');
-        return;
-    }
-
-    const points = currentTerrain.points;
-    const stats = currentTerrain.stats;
-
-    // Create slope histogram data
-    const data = [{
-        type: 'histogram',
-        x: points.map(p => p.slope),
-        nbinsx: 30,
-        name: 'Slope Distribution',
-        marker: {
-            color: 'rgb(158,202,225)',
-            line: {
-                color: 'rgb(8,48,107)',
-                width: 1
-            }
-        }
-    }];
-
-    const layout = {
-        ...plotlyDefaults.layout,
-        title: 'Slope Analysis',
-        xaxis: { title: 'Slope (degrees)' },
-        yaxis: { title: 'Count' },
-        bargap: 0.05
-    };
-
-    // Switch to plot view
-    document.getElementById('terrain-view').classList.add('d-none');
-    const plotView = document.getElementById('plot-view');
-    plotView.classList.remove('d-none');
-
-    Plotly.newPlot('plot-view', data, layout);
-    debugLog('Slope plot shown');
-}
-
-// Toggle 3D/2D view
-function toggle3DView() {
-    is3DView = !is3DView;
-    document.getElementById('terrain-view').classList.toggle('d-none', !is3DView);
-    document.getElementById('plot-view').classList.toggle('d-none', is3DView);
-    debugLog(`3D view toggled: ${is3DView}`);
-}
-
-// Reset view
-function resetView() {
-    if (is3DView) {
-        // Reset 3D view
-        document.getElementById('terrain-view').classList.remove('d-none');
-        document.getElementById('plot-view').classList.add('d-none');
-    } else {
-        // Reset plot view
-        showElevationPlot();
-    }
-    debugLog('View reset');
-}
-
-// Update statistics display
-function updateStats() {
-    if (!currentTerrain) return;
-
-    const stats = currentTerrain.stats;
-    const statsDiv = document.getElementById('terrain-stats');
-
-    statsDiv.innerHTML = `
-        <table class="table table-sm stats-table">
-            <tbody>
-                <tr>
-                    <td>Points</td>
-                    <td>${stats.point_count}</td>
-                </tr>
-                <tr>
-                    <td>Elevation Range</td>
-                    <td>${stats.bounds.min_z.toFixed(2)}m - ${stats.bounds.max_z.toFixed(2)}m</td>
-                </tr>
-                <tr>
-                    <td>Mean Slope</td>
-                    <td>${stats.mean_slope.toFixed(1)}°</td>
-                </tr>
-                <tr>
-                    <td>Max Slope</td>
-                    <td>${stats.max_slope.toFixed(1)}°</td>
-                </tr>
-                <tr>
-                    <td>Surface Area</td>
-                    <td>${stats.surface_area.toFixed(1)} m²</td>
-                </tr>
-                <tr>
-                    <td>Volume</td>
-                    <td>${stats.volume.toFixed(1)} m³</td>
-                </tr>
-            </tbody>
-        </table>
-    `;
-    debugLog('Statistics updated');
-}
-
-// Event Listeners
-uploadButton.addEventListener('click', uploadDXF);
-
-// Initial load
 document.addEventListener('DOMContentLoaded', function() {
-    debugLog('Application initialized');
-    loadTerrainList();
+    // Initialize UI components
+    const fileInput = document.getElementById('file-input');
+    const modelNameInput = document.getElementById('model-name');
+    const importButton = document.getElementById('import-button');
+    const loadModelSelect = document.getElementById('load-model-select');
+    const loadButton = document.getElementById('load-button');
+    const plotContainer = document.getElementById('plot-container');
+    const metricsContainer = document.getElementById('metrics-container');
+    const loadingSpinner = document.createElement('div');
+    loadingSpinner.className = 'spinner';
+    loadingSpinner.style.display = 'none';
+    document.body.appendChild(loadingSpinner);
+
+    // Show loading spinner
+    function showLoading() {
+        loadingSpinner.style.display = 'block';
+    }
+
+    // Hide loading spinner
+    function hideLoading() {
+        loadingSpinner.style.display = 'none';
+    }
+
+    // Display error message
+    function showError(message) {
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message';
+        errorDiv.textContent = message;
+        document.body.appendChild(errorDiv);
+        setTimeout(() => errorDiv.remove(), 5000);
+    }
+
+    // Display success message
+    function showSuccess(message) {
+        const successDiv = document.createElement('div');
+        successDiv.className = 'success-message';
+        successDiv.textContent = message;
+        document.body.appendChild(successDiv);
+        setTimeout(() => successDiv.remove(), 5000);
+    }
+
+    // Display terrain metrics with bounds
+    function displayMetrics(metrics) {
+        metricsContainer.innerHTML = `
+            <h3>Terrain Metrics</h3>
+            <table>
+                <tr><td>Points:</td><td>${metrics.points}</td></tr>
+                <tr><td>Min Elevation:</td><td>${metrics.min_elevation.toFixed(2)} m</td></tr>
+                <tr><td>Max Elevation:</td><td>${metrics.max_elevation.toFixed(2)} m</td></tr>
+                <tr><td>Average Elevation:</td><td>${metrics.avg_elevation.toFixed(2)} m</td></tr>
+                <tr><td>Surface Area:</td><td>${metrics.surface_area.toFixed(2)} m²</td></tr>
+                <tr><td>Volume:</td><td>${metrics.volume.toFixed(2)} m³</td></tr>
+                <tr><td>X Range:</td><td>${metrics.bounds.min_x.toFixed(2)} m to ${metrics.bounds.max_x.toFixed(2)} m</td></tr>
+                <tr><td>Y Range:</td><td>${metrics.bounds.min_y.toFixed(2)} m to ${metrics.bounds.max_y.toFixed(2)} m</td></tr>
+            </table>
+        `;
+    }
+
+    // Update available models list
+    async function updateModelsList() {
+        try {
+            const response = await fetch('/api/terrain/list');
+            const data = await response.json();
+            
+            if (response.ok) {
+                loadModelSelect.innerHTML = '';
+                data.models.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model;
+                    option.textContent = model;
+                    loadModelSelect.appendChild(option);
+                });
+            } else {
+                showError(data.error || 'Failed to fetch models list');
+            }
+        } catch (error) {
+            showError('Error fetching models list: ' + error.message);
+        }
+    }
+
+    // Get available layers from DXF file
+    async function getDXFLayers(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {
+            const response = await fetch('/api/dxf/layers', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                return data.layers;
+            } else {
+                throw new Error(data.error || 'Failed to get DXF layers');
+            }
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    // Import terrain from DXF file
+    async function importTerrain(file, modelName) {
+        showLoading();
+        
+        try {
+            // Get available layers first
+            const layers = await getDXFLayers(file);
+            const targetLayer = layers.find(l => l === 'z value TN') || layers[0];
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('model_name', modelName);
+            formData.append('layer', targetLayer);
+            
+            const response = await fetch('/api/terrain/import', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                showSuccess('Terrain imported successfully');
+                plotContainer.innerHTML = data.plot;
+                displayMetrics(data.metrics);
+                await updateModelsList();
+            } else {
+                showError(data.error || 'Failed to import terrain');
+            }
+        } catch (error) {
+            showError('Error importing terrain: ' + error.message);
+        } finally {
+            hideLoading();
+        }
+    }
+
+    // Load existing terrain model
+    async function loadTerrain(modelName) {
+        showLoading();
+        
+        try {
+            // Get terrain data and plot
+            const response = await fetch(`/api/terrain/${modelName}/load`);
+            const data = await response.json();
+            
+            if (response.ok) {
+                showSuccess('Terrain loaded successfully');
+                plotContainer.innerHTML = data.plot;
+                displayMetrics(data.metrics);
+            } else {
+                showError(data.error || 'Failed to load terrain');
+            }
+        } catch (error) {
+            showError('Error loading terrain: ' + error.message);
+        } finally {
+            hideLoading();
+        }
+    }
+
+    // Event listeners
+    importButton.addEventListener('click', () => {
+        const file = fileInput.files[0];
+        const modelName = modelNameInput.value.trim();
+        
+        if (!file) {
+            showError('Please select a DXF file');
+            return;
+        }
+        
+        if (!modelName) {
+            showError('Please enter a model name');
+            return;
+        }
+        
+        importTerrain(file, modelName);
+    });
+
+    loadButton.addEventListener('click', () => {
+        const modelName = loadModelSelect.value;
+        if (!modelName) {
+            showError('Please select a model to load');
+            return;
+        }
+        loadTerrain(modelName);
+    });
+
+    // Initialize
+    updateModelsList();
 });

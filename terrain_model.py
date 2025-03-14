@@ -28,6 +28,34 @@ class TerrainModel:
             'slopes': {}  # Store slope values per point for visualization
         }
 
+    @property
+    def min_elevation(self) -> float:
+        """Get minimum elevation (z) value."""
+        return self._stats['bounds']['min_z']
+
+    @property
+    def max_elevation(self) -> float:
+        """Get maximum elevation (z) value."""
+        return self._stats['bounds']['max_z']
+
+    @property
+    def avg_elevation(self) -> float:
+        """Get average elevation (z) value."""
+        if len(self.points) == 0:
+            return 0.0
+        points_array = self.points.get_points_array()
+        return float(np.mean(points_array[:, 2]))
+
+    @property
+    def surface_area(self) -> float:
+        """Get terrain surface area in square meters."""
+        return self._stats['surface_area']
+
+    @property
+    def volume(self) -> float:
+        """Get terrain volume in cubic meters."""
+        return self._stats['volume']
+
     def add_point(self, point: Point3D) -> None:
         """Add a point to the terrain model and update statistics."""
         self.points.add_point(point)
@@ -199,14 +227,13 @@ class TerrainModel:
             
             # Update statistics
             self._stats.update({
-                'mean_slope': float(mean_slope),
-                'max_slope': float(np.max(slopes_deg)),
+                'mean_slope': mean_slope,
+                'max_slope': np.max(slopes_deg),
                 'surface_area': float(np.sum(areas)),
                 'volume': float(np.sum(volumes))
             })
             
         except Exception as e:
-            # Log error and set default values
             logging.error(f"Error computing surface metrics: {str(e)}")
             self._stats.update({
                 'mean_slope': 0.0,

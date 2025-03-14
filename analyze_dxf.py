@@ -1,157 +1,100 @@
 import ezdxf
+import sys
 import logging
-from typing import Dict, List, Set, Tuple
 
-# Standard DXF entity types
-STANDARD_ENTITY_TYPES = {
-    'POINT', 'LINE', '3DFACE', 'TEXT', 'MTEXT', 'INSERT',
-    'CIRCLE', 'ARC', 'ELLIPSE', 'SPLINE', 'POLYLINE',
-    'LWPOLYLINE', 'SOLID', 'TRACE', 'MESH', 'HATCH'
-}
+def get_safe_attribute(entity, attr_name, default=None):
+    """Safely get an attribute from a DXF entity."""
+    try:
+        if hasattr(entity, 'dxf'):
+            return getattr(entity.dxf, attr_name, default)
+        return default
+    except Exception:
+        return default
 
-def analyze_dxf(file_path: str) -> Dict:
-    """Analyze DXF file contents and return detailed information."""
+def analyze_text_entities(doc: ezdxf.document.Drawing, layer: str) -> None:
+    """Analyze TEXT entities in the specified layer."""
+    msp = doc.modelspace()
+    text_entities = msp.query(f'TEXT[layer=="{layer}"]')
+    
+    print(f"\nAnalyzing TEXT entities in layer '{layer}':")
+    print(f"Found {len(text_entities)} TEXT entities")
+    
+    if len(text_entities) == 0:
+        return
+        
+    # Analyze first few entities in detail
+    print("\nDetailed analysis of first 5 TEXT entities:")
+    for i, entity in enumerate(text_entities[:5]):
+        text = get_safe_attribute(entity, 'text', '')
+        insert = get_safe_attribute(entity, 'insert', (0,0,0))
+        layer = get_safe_attribute(entity, 'layer', '')
+        
+        print(f"\nTEXT Entity #{i+1}:")
+        print(f"  Text content: '{text}'")
+        print(f"  Text repr: {repr(text)}")  # Show exact string representation
+        print(f"  Text bytes: {[ord(c) for c in text]}")  # Show character codes
+        print(f"  Insert point: {insert}")
+        print(f"  Layer: {layer}")
+        
+        # Try to parse elevation
+        try:
+            cleaned_text = text.strip().replace(',', '.')
+            elevation = float(cleaned_text)
+            print(f"  Parsed elevation: {elevation}")
+        except ValueError:
+            print(f"  Failed to parse elevation")
+
+def analyze_dxf(file_path: str) -> None:
+    """Analyze the contents of a DXF file."""
     try:
         doc = ezdxf.readfile(file_path)
         msp = doc.modelspace()
         
-        # Initialize analysis data
-        analysis = {
-            'entity_types': {},
-            'layers': set(),
-            'custom_entities': [],
-            'point_count': 0,
-            'attributes': set(),
-            'layer_entities': {}  # Track entities per layer
-        }
+        # Count entities by type and layer
+        entity_counts = {}
+        layer_entities = {}
         
-        # Analyze each entity
         for entity in msp:
-            # Get entity type
+            # Count by entity type
             entity_type = entity.dxftype()
-            analysis['entity_types'][entity_type] = analysis['entity_types'].get(entity_type, 0) + 1
+            entity_counts[entity_type] = entity_counts.get(entity_type, 0) + 1
             
-            # Check if it's a custom entity
-            if entity_type not in STANDARD_ENTITY_TYPES:
-                entity_info = {
-                    'type': entity_type,
-                    'attributes': [],
-                    'dxf_attributes': [],
-                    'sample_data': {}
-                }
-                
-                # Get regular attributes
-                for attr in dir(entity):
-                    if not attr.startswith('_'):
-                        try:
-                            value = getattr(entity, attr)
-                            if not callable(value):
-                                entity_info['attributes'].append(attr)
-                                if len(str(value)) < 100:  # Only store small values
-                                    entity_info['sample_data'][attr] = str(value)
-                        except Exception:
-                            pass
-                
-                # Get DXF attributes
-                if hasattr(entity, 'dxf'):
-                    for attr in dir(entity.dxf):
-                        if not attr.startswith('_'):
-                            try:
-                                value = getattr(entity.dxf, attr)
-                                if not callable(value):
-                                    entity_info['dxf_attributes'].append(attr)
-                                    if len(str(value)) < 100:  # Only store small values
-                                        entity_info['sample_data'][f"dxf.{attr}"] = str(value)
-                            except Exception:
-                                pass
-                
-                analysis['custom_entities'].append(entity_info)
-            
-            # Get layer
-            try:
-                layer = None
-                if hasattr(entity.dxf, 'layer'):
-                    layer = entity.dxf.layer
-                elif hasattr(entity, 'layer'):
-                    layer = entity.layer
-                elif hasattr(entity, 'get_dxf_attrib'):
-                    layer = entity.get_dxf_attrib('layer', None)
-                
-                if layer:
-                    analysis['layers'].add(layer)
-                    if layer not in analysis['layer_entities']:
-                        analysis['layer_entities'][layer] = {}
-                    layer_stats = analysis['layer_entities'][layer]
-                    layer_stats[entity_type] = layer_stats.get(entity_type, 0) + 1
-            except Exception:
-                pass
-            
-            # Collect all available attributes
-            for attr in dir(entity):
-                if not attr.startswith('_'):
-                    analysis['attributes'].add(attr)
-            
-            # Count points
-            if entity_type == 'POINT':
-                analysis['point_count'] += 1
-            elif entity_type == 'LINE':
-                analysis['point_count'] += 2
-            elif entity_type == '3DFACE':
-                analysis['point_count'] += 4
+            # Count by layer
+            layer = get_safe_attribute(entity, 'layer', 'NO_LAYER')
+            if layer not in layer_entities:
+                layer_entities[layer] = {}
+            layer_entities[layer][entity_type] = layer_entities[layer].get(entity_type, 0) + 1
         
-        # Convert sets to sorted lists for better readability
-        analysis['layers'] = sorted(list(analysis['layers']))
-        analysis['attributes'] = sorted(list(analysis['attributes']))
+        # Print analysis
+        print("\n=== DXF File Analysis ===\n")
         
-        return analysis
+        # Print entity type counts
+        print("Entity Types:")
+        for entity_type, count in sorted(entity_counts.items()):
+            print(f"  {entity_type}: {count}")
         
-    except Exception as e:
-        logging.error(f"Error analyzing DXF file: {str(e)}")
-        raise ValueError(f"Failed to analyze DXF file: {str(e)}")
-
-def print_analysis(analysis: Dict) -> None:
-    """Print DXF analysis in a readable format."""
-    print("\n=== DXF File Analysis ===")
-    
-    print("\nEntity Types:")
-    for entity_type, count in sorted(analysis['entity_types'].items()):
-        print(f"  {entity_type}: {count}")
-    
-    print("\nLayers and Their Entities:")
-    for layer in analysis['layers']:
-        print(f"\n  Layer: {layer}")
-        if layer in analysis['layer_entities']:
-            for entity_type, count in sorted(analysis['layer_entities'][layer].items()):
+        # Print layer analysis
+        print("\nLayers and Their Entities:\n")
+        for layer, entities in sorted(layer_entities.items()):
+            print(f"  Layer: {layer}")
+            for entity_type, count in sorted(entities.items()):
                 print(f"    {entity_type}: {count}")
-    
-    if analysis['custom_entities']:
-        print("\nCustom Entities:")
-        for entity in analysis['custom_entities']:
-            print(f"\n  Type: {entity['type']}")
-            
-            if entity['attributes']:
-                print("  Regular Attributes:")
-                for attr in sorted(entity['attributes']):
-                    value = entity['sample_data'].get(attr, '')
-                    print(f"    {attr}: {value}")
-            
-            if entity['dxf_attributes']:
-                print("  DXF Attributes:")
-                for attr in sorted(entity['dxf_attributes']):
-                    value = entity['sample_data'].get(f"dxf.{attr}", '')
-                    print(f"    {attr}: {value}")
-    
-    print(f"\nTotal Point Count: {analysis['point_count']}")
+        
+        # Analyze TEXT entities in z value TN layer
+        analyze_text_entities(doc, 'z value TN')
+        
+        # Count total points
+        total_points = sum(count for entity_type, count in entity_counts.items() 
+                         if entity_type in ['POINT', 'INSERT', 'TCPOINTENTITY'])
+        print(f"\nTotal Point Count: {total_points}")
+        
+    except Exception as e:
+        print(f"Error analyzing DXF file: {str(e)}", file=sys.stderr)
+        sys.exit(1)
 
-if __name__ == '__main__':
-    import sys
+if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python analyze_dxf.py <dxf_file>")
+        print("Usage: python analyze_dxf.py <dxf_file>", file=sys.stderr)
         sys.exit(1)
         
-    try:
-        analysis = analyze_dxf(sys.argv[1])
-        print_analysis(analysis)
-    except Exception as e:
-        print(f"Error: {str(e)}")
-        sys.exit(1)
+    analyze_dxf(sys.argv[1])
