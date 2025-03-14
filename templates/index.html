@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terrain Visualization</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .section {
+            margin-bottom: 20px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .input-group {
+            margin-bottom: 10px;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .input-group input, .input-group select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 100%;
+            max-width: 300px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #plot-container {
+            width: 100%;
+            min-height: 600px;
+            margin-top: 20px;
+        }
+        #metrics-container {
+            margin-top: 20px;
+        }
+        #metrics-container table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        #metrics-container td {
+            padding: 8px;
+            border: 1px solid #ddd;
+        }
+        #metrics-container td:first-child {
+            font-weight: bold;
+            width: 200px;
+        }
+        .spinner {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            display: none;
+        }
+        @keyframes spin {
+            0% { transform: translate(-50%, -50%) rotate(0deg); }
+            100% { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+        .error-message {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: #ff6b6b;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 4px;
+            z-index: 1000;
+        }
+        .success-message {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: #51cf66;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 4px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Terrain Visualization</h1>
+        
+        <!-- Import Section -->
+        <div class="section">
+            <h2>Import Terrain</h2>
+            <div class="input-group">
+                <label for="file-input">DXF File:</label>
+                <input type="file" id="file-input" accept=".dxf">
+            </div>
+            <div class="input-group">
+                <label for="model-name">Model Name:</label>
+                <input type="text" id="model-name" placeholder="Enter model name">
+            </div>
+            <button id="import-button">Import Terrain</button>
+        </div>
+        
+        <!-- Load Section -->
+        <div class="section">
+            <h2>Load Terrain</h2>
+            <div class="input-group">
+                <label for="load-model-select">Select Model:</label>
+                <select id="load-model-select"></select>
+            </div>
+            <button id="load-button">Load Terrain</button>
+        </div>
+        
+        <!-- Metrics Section -->
+        <div id="metrics-container"></div>
+        
+        <!-- Plot Section -->
+        <div id="plot-container"></div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div class="spinner"></div>
+
+    <!-- JavaScript -->
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

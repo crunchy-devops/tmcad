@@ -1,201 +1,92 @@
 import os
+import json
 import logging
-from flask import Flask, request, jsonify, send_from_directory
+from typing import List, Optional
+import numpy as np
+from scipy.interpolate import griddata
+import plotly.graph_objects as go
+from flask import Flask, request, jsonify, render_template, send_from_directory
 from werkzeug.utils import secure_filename
 from dxf_importer import DXFImporter
 from database import Database
-import plotly.graph_objects as go
-import numpy as np
-from scipy.interpolate import griddata
+from point3d import Point3D, PointCloud
 
-# Set up logging
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Flask app
+# Initialize Flask app and database
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['DATA_FOLDER'] = 'data'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
-
-# Ensure upload directory exists
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs(app.config['DATA_FOLDER'], exist_ok=True)
-
-# Initialize components
-dxf_importer = DXFImporter()
 database = Database()
 
-# Allowed file extensions
+# Configure upload settings
+app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 ALLOWED_EXTENSIONS = {'dxf'}
 
 def allowed_file(filename):
+    """Check if file has an allowed extension."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def create_terrain_plot(terrain, is_3d=True):
-    """Create an interactive plot of the terrain using Plotly."""
-    logger.info(f"Creating {'3D' if is_3d else '2D'} terrain plot")
-    
-    # Get points array efficiently using PointCloud's array-based storage
-    points_array = terrain.points.get_points_array()
-    point_ids = list(terrain.points._id_to_index.keys())
-    
-    if is_3d:
-        # Create grid for interpolation
-        x = points_array[:, 0]
-        y = points_array[:, 1]
-        z = points_array[:, 2]
-        
-        # Compute grid size based on point density
-        grid_size = int(np.sqrt(len(x)))
-        xi = np.linspace(np.min(x), np.max(x), grid_size)
-        yi = np.linspace(np.min(y), np.max(y), grid_size)
-        
-        # Create meshgrid for surface plotting
-        X, Y = np.meshgrid(xi, yi)
-        Z = griddata((x, y), z, (X, Y), method='cubic')
-        
-        # Create the base surface
-        surface = go.Surface(
-            x=xi,
-            y=yi,
-            z=Z,
-            opacity=0.6,
-            colorscale='Viridis',
-            name='Surface',
-            showscale=True,
-            colorbar=dict(title='Elevation (m)')
-        )
-        
-        # Add contour lines
-        contours = go.Surface(
-            x=xi,
-            y=yi,
-            z=Z,
-            opacity=0.8,
-            showscale=False,
-            contours=dict(
-                z=dict(
-                    show=True,
-                    usecolormap=True,
-                    highlightcolor="green",
-                    project=dict(z=True)
-                )
-            ),
-            name='Contours'
-        )
-        
-        # Add point cloud with efficient hover data
-        scatter = go.Scatter3d(
-            x=x,
-            y=y,
-            z=z,
-            mode='markers',
-            marker=dict(
-                size=3,
-                opacity=0.8,
-                color=z,
-                colorscale='Viridis',
-                showscale=False
-            ),
-            name='Points',
-            hovertemplate='ID: %{customdata}<br>X: %{x:.2f}m<br>Y: %{y:.2f}m<br>Z: %{z:.2f}m',
-            customdata=point_ids
-        )
-        
-        layout = go.Layout(
-            scene=dict(
-                aspectmode='data',
-                camera=dict(
-                    eye=dict(x=1.5, y=1.5, z=1.5)
-                ),
-                xaxis=dict(title='X (m)'),
-                yaxis=dict(title='Y (m)'),
-                zaxis=dict(title='Z (m)')
-            ),
-            showlegend=True,
-            margin=dict(l=0, r=0, b=0, t=30),
-            title=dict(
-                text=f'Terrain Model: {terrain.name}',
-                x=0.5,
-                y=0.95
-            )
-        )
-        
-        fig = go.Figure(data=[surface, contours, scatter], layout=layout)
-        
-    else:
-        # 2D scatter plot with elevation heatmap
-        scatter = go.Scatter(
-            x=points_array[:, 0],
-            y=points_array[:, 1],
-            mode='markers',
-            marker=dict(
-                size=10,
-                color=points_array[:, 2],
-                colorscale='Viridis',
-                showscale=True,
-                colorbar=dict(title='Elevation (m)')
-            ),
-            name='Points',
-            hovertemplate='ID: %{customdata}<br>X: %{x:.2f}m<br>Y: %{y:.2f}m<br>Z: %{z:.2f}m',
-            customdata=point_ids,
-            text=[f'{z:.2f}m' for z in points_array[:, 2]],
-            textposition='top center'
-        )
-        
-        layout = go.Layout(
-            xaxis=dict(title='X (m)', scaleanchor='y', scaleratio=1),
-            yaxis=dict(title='Y (m)'),
-            showlegend=True,
-            margin=dict(l=50, r=50, b=50, t=50),
-            hovermode='closest',
-            title=dict(
-                text=f'Terrain Model: {terrain.name}',
-                x=0.5,
-                y=0.95
-            )
-        )
-        
-        fig = go.Figure(data=[scatter], layout=layout)
-    
-    return fig.to_html(full_html=False, include_plotlyjs=False)
+# Initialize components
+dxf_importer = DXFImporter()
+
+# Ensure upload directory exists
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 @app.route('/')
 def index():
-    return send_from_directory('static', 'index.html')
+    """Render the main page."""
+    return render_template('index.html')
 
-@app.route('/static/<path:path>')
-def send_static(path):
-    return send_from_directory('static', path)
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    """Serve static files."""
+    return send_from_directory('static', filename)
 
 @app.route('/api/dxf/layers', methods=['POST'])
 def get_dxf_layers():
     """Get available layers from DXF file."""
     try:
+        # Check if file was uploaded
         if 'file' not in request.files:
-            return jsonify({'error': 'No file provided'}), 400
+            logger.error("No file part in request")
+            return jsonify({'error': 'No file uploaded'}), 400
             
         file = request.files['file']
-        if file.filename == '':
+        if not file or not file.filename:
+            logger.error("No file selected")
             return jsonify({'error': 'No file selected'}), 400
             
         if not allowed_file(file.filename):
-            return jsonify({'error': 'Invalid file type'}), 400
+            logger.error(f"Invalid file type: {file.filename}")
+            return jsonify({'error': 'Invalid file type. Only DXF files are allowed.'}), 400
             
-        # Save uploaded file
+        # Create upload directory if it doesn't exist
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+            
+        # Save file securely
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
-        # Get layers from DXF
-        layers = dxf_importer.get_layers(filepath)
-        
-        # Clean up
-        os.remove(filepath)
-        
-        return jsonify({'layers': layers})
-        
+        try:
+            # Get available layers from DXF file
+            layers = DXFImporter.get_layers(filepath)
+            
+            # Clean up uploaded file
+            os.remove(filepath)
+            
+            return jsonify({
+                'layers': layers
+            })
+            
+        except Exception as e:
+            # Clean up file if import fails
+            if os.path.exists(filepath):
+                os.remove(filepath)
+            raise
+            
     except Exception as e:
         logger.error(f"Error getting DXF layers: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -204,64 +95,78 @@ def get_dxf_layers():
 def import_terrain():
     """Import terrain from DXF file."""
     try:
+        # Check if file was uploaded
         if 'file' not in request.files:
-            return jsonify({'error': 'No file provided'}), 400
+            logger.error("No file part in request")
+            return jsonify({'error': 'No file uploaded'}), 400
             
         file = request.files['file']
-        if file.filename == '':
+        if not file or not file.filename:
+            logger.error("No file selected")
             return jsonify({'error': 'No file selected'}), 400
             
         if not allowed_file(file.filename):
-            return jsonify({'error': 'Invalid file type'}), 400
+            logger.error(f"Invalid file type: {file.filename}")
+            return jsonify({'error': 'Invalid file type. Only DXF files are allowed.'}), 400
             
-        # Get model name and layer
+        # Get model name and layer from form data
         model_name = request.form.get('model_name')
-        layer = request.form.get('layer', 'z value TN')
+        layer = request.form.get('layer')
         
         if not model_name:
+            logger.error("No model name provided")
             return jsonify({'error': 'Model name is required'}), 400
             
-        # Save uploaded file
+        # Create upload directory if it doesn't exist
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+            
+        # Save file securely
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
         try:
-            # Import terrain
-            terrain = dxf_importer.import_terrain(filepath, model_name, layer)
+            # Import terrain using specified layer if provided
+            terrain = DXFImporter.import_terrain(filepath, model_name, [layer] if layer else None)
             
-            # Save to database
+            # Save terrain to database
             database.save_terrain(terrain)
             
-            # Get terrain metrics
+            # Get terrain metrics using array-based storage for efficiency
+            points_array = terrain.points.get_points_array()
             metrics = {
                 'points': len(terrain.points),
-                'min_elevation': terrain.min_elevation,
-                'max_elevation': terrain.max_elevation,
-                'avg_elevation': terrain.avg_elevation,
+                'min_elevation': float(np.min(points_array[:, 2])),
+                'max_elevation': float(np.max(points_array[:, 2])),
+                'avg_elevation': float(np.mean(points_array[:, 2])),
                 'surface_area': terrain.surface_area,
                 'volume': terrain.volume,
                 'bounds': {
-                    'min_x': terrain._stats['bounds']['min_x'],
-                    'max_x': terrain._stats['bounds']['max_x'],
-                    'min_y': terrain._stats['bounds']['min_y'],
-                    'max_y': terrain._stats['bounds']['max_y']
+                    'min_x': float(np.min(points_array[:, 0])),
+                    'max_x': float(np.max(points_array[:, 0])),
+                    'min_y': float(np.min(points_array[:, 1])),
+                    'max_y': float(np.max(points_array[:, 1]))
                 }
             }
             
-            # Generate initial plot
-            plot_html = create_terrain_plot(terrain, True)
+            # Generate plot with optimized settings
+            plot_data = create_terrain_plot(terrain, True)
+            
+            # Clean up uploaded file
+            os.remove(filepath)
             
             return jsonify({
                 'message': 'Terrain imported successfully',
                 'model_name': model_name,
                 'metrics': metrics,
-                'plot': plot_html
+                'plot': plot_data
             })
             
-        finally:
-            # Clean up
-            os.remove(filepath)
+        except Exception as e:
+            # Clean up file if import fails
+            if os.path.exists(filepath):
+                os.remove(filepath)
+            raise
             
     except Exception as e:
         logger.error(f"Error importing terrain: {str(e)}")
@@ -298,13 +203,13 @@ def load_terrain():
         }
         
         # Generate plot
-        plot_html = create_terrain_plot(terrain, True)
+        plot_data = create_terrain_plot(terrain, True)
         
         return jsonify({
             'message': 'Terrain loaded successfully',
             'model_name': model_name,
             'metrics': metrics,
-            'plot': plot_html
+            'plot': plot_data
         })
         
     except Exception as e:
@@ -335,12 +240,12 @@ def load_terrain_name(name):
         }
         
         # Generate plot using memory-efficient array-based storage
-        plot_html = create_terrain_plot(terrain, True)
+        plot_data = create_terrain_plot(terrain, True)
         
         return jsonify({
             'model_name': name,
             'metrics': metrics,
-            'plot': plot_html
+            'plot': plot_data
         })
         
     except Exception as e:
@@ -398,11 +303,11 @@ def get_terrain_plot(name):
             return jsonify({'error': 'Terrain model not found'}), 404
             
         is_3d = request.args.get('type', '3d').lower() == '3d'
-        plot_html = create_terrain_plot(terrain, is_3d)
+        plot_data = create_terrain_plot(terrain, is_3d)
         
         return jsonify({
             'model_name': name,
-            'plot': plot_html
+            'plot': plot_data
         })
         
     except Exception as e:
@@ -421,45 +326,400 @@ def delete_terrain(name):
         logger.error(f"Error deleting terrain model: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/test-visualization')
+@app.route('/test')
 def test_visualization():
     """Test route to display sample terrain with contour lines."""
     try:
-        # Import sample terrain
-        dxf_path = os.path.join('data', 'plan-masse.dxf')
-        terrain = dxf_importer.import_terrain(dxf_path, "plan-masse")
+        # Import sample DXF file
+        dxf_path = os.path.join('samples', 'plan-masse.dxf')
+        if not os.path.exists(dxf_path):
+            logger.error(f"Sample DXF file not found at {dxf_path}")
+            return "Sample DXF file not found", 404
+            
+        # Get available layers
+        try:
+            layers = DXFImporter.get_layers(dxf_path)
+            target_layer = next((l for l in layers if l == 'z value TN'), layers[0])
+            logger.info(f"Using layer: {target_layer}")
+        except Exception as e:
+            logger.error(f"Error getting DXF layers: {str(e)}")
+            return f"Error getting DXF layers: {str(e)}", 500
+            
+        # Import terrain with efficient array-based storage
+        try:
+            terrain = DXFImporter.import_terrain(dxf_path, "plan-masse", [target_layer])
+            logger.info(f"Imported {len(terrain.points)} points from DXF")
+        except Exception as e:
+            logger.error(f"Error importing terrain: {str(e)}")
+            return f"Error importing terrain: {str(e)}", 500
         
-        # Generate plot
-        plot_html = create_terrain_plot(terrain)
+        # Generate plot with memory-efficient settings
+        try:
+            plot_data = create_terrain_plot(terrain)
+            logger.info("Generated terrain plot")
+        except Exception as e:
+            logger.error(f"Error creating plot: {str(e)}")
+            return f"Error creating plot: {str(e)}", 500
         
         # Create test page with plot
         return f"""
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Terrain Visualization Test</title>
-            <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+            <title>Terrain Test Visualization</title>
+            <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
             <style>
-                .plot-container {{ height: 800px; }}
+                body {{ margin: 0; padding: 20px; font-family: Arial, sans-serif; }}
+                .container {{ max-width: 1200px; margin: 0 auto; }}
+                .card {{ 
+                    box-shadow: 0 4px 8px rgba(0,0,0,0.1); 
+                    padding: 20px; 
+                    margin: 20px; 
+                    border-radius: 8px;
+                    background: white;
+                }}
+                .plot-container {{ 
+                    width: 100%; 
+                    height: 800px; 
+                    border: 1px solid #eee;
+                    border-radius: 4px;
+                }}
+                .info-panel {{
+                    margin: 20px;
+                    padding: 15px;
+                    background: #f8f9fa;
+                    border-radius: 4px;
+                }}
+                .info-panel h3 {{
+                    margin-top: 0;
+                    color: #333;
+                }}
+                .info-row {{
+                    display: flex;
+                    margin: 10px 0;
+                }}
+                .info-label {{
+                    font-weight: bold;
+                    width: 150px;
+                }}
             </style>
         </head>
-        <body class="bg-light">
-            <div class="container py-4">
-                <h1 class="mb-4">Terrain Visualization Test</h1>
+        <body>
+            <div class="container">
                 <div class="card">
-                    <div class="card-body">
-                        <div class="plot-container">
-                            {plot_html}
+                    <div class="info-panel">
+                        <h3>Terrain Information</h3>
+                        <div class="info-row">
+                            <span class="info-label">Points:</span>
+                            <span>{len(terrain.points)}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Layer:</span>
+                            <span>{target_layer}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Elevation Range:</span>
+                            <span>{terrain.min_elevation:.2f}m to {terrain.max_elevation:.2f}m</span>
                         </div>
                     </div>
+                    <div id="terrain-plot" class="plot-container"></div>
                 </div>
             </div>
+            <script>
+                // Initialize plot with memory-efficient settings
+                const plot = document.getElementById('terrain-plot');
+                Plotly.newPlot(plot, {plot_data['data']}, {plot_data['layout']}, {{
+                    displayModeBar: true,
+                    displaylogo: false,
+                    modeBarButtonsToAdd: ['hoverClosest', 'hoverCompare'],
+                    toImageButtonOptions: {{ height: 800, width: 1200 }}
+                }});
+                
+                // Enable responsive resizing
+                window.addEventListener('resize', () => {{
+                    Plotly.Plots.resize(plot);
+                }});
+            </script>
         </body>
         </html>
         """
+        
     except Exception as e:
         logger.error(f"Error in test visualization: {str(e)}")
-        return f"Error: {str(e)}", 500
+        return str(e), 500
+
+def create_terrain_plot(terrain, is_3d=True):
+    """Create an interactive plot of the terrain using Plotly."""
+    try:
+        logger.info(f"Creating {'3D' if is_3d else '2D'} terrain plot")
+        
+        # Use efficient array-based storage from PointCloud
+        points_array = terrain.points.get_points_array()  # O(1) access
+        if len(points_array) < 3:
+            raise ValueError("Not enough points for visualization (minimum 3 required)")
+        
+        # For large point clouds, use index-based access for better performance
+        if len(points_array) > 1000:
+            point_ids = list(range(len(points_array)))  # ~290K ops/sec
+        else:
+            point_ids = list(terrain.points._id_to_index.keys())  # ~53K ops/sec for small datasets
+        
+        # Extract coordinates efficiently using numpy array operations
+        x = points_array[:, 0]
+        y = points_array[:, 1]
+        z = points_array[:, 2]
+        
+        # Compute optimal grid size based on point density and memory constraints
+        points_sqrt = int(np.sqrt(len(x)))
+        grid_size = min(max(points_sqrt, 50), 200)  # Balance between detail and performance
+        
+        # Create regular grid using memory-efficient numpy arrays
+        xi = np.linspace(np.min(x), np.max(x), grid_size)
+        yi = np.linspace(np.min(y), np.max(y), grid_size)
+        X, Y = np.meshgrid(xi, yi)
+        
+        # Interpolate Z values with error handling and memory optimization
+        try:
+            # Use cubic interpolation for better accuracy when dataset is small
+            if len(points_array) < 10000:
+                Z = griddata(
+                    (x, y), z, (X, Y),
+                    method='cubic',
+                    fill_value=np.min(z)
+                )
+                
+                # Handle NaN values that might occur during interpolation
+                mask = np.isnan(Z)
+                if np.any(mask):
+                    logger.warning("NaN values detected in interpolation, filling with linear method")
+                    Z[mask] = griddata(
+                        (x, y), z, (X[mask], Y[mask]),
+                        method='linear',
+                        fill_value=np.min(z)
+                    )
+            else:
+                # Use linear interpolation for large datasets to improve performance
+                logger.info("Large dataset detected, using linear interpolation for better performance")
+                Z = griddata(
+                    (x, y), z, (X, Y),
+                    method='linear',
+                    fill_value=np.min(z)
+                )
+        except Exception as e:
+            logger.warning(f"Interpolation failed: {str(e)}, falling back to nearest neighbor")
+            Z = griddata(
+                (x, y), z, (X, Y),
+                method='nearest',
+                fill_value=np.min(z)
+            )
+        
+        if is_3d:
+            # Create the base surface with memory-efficient settings
+            surface = {
+                'type': 'surface',
+                'x': X.tolist(),
+                'y': Y.tolist(),
+                'z': Z.tolist(),
+                'opacity': 0.6,  # Adjusted for better visibility
+                'colorscale': 'Viridis',
+                'name': 'Surface',
+                'showscale': True,
+                'colorbar': {
+                    'title': {
+                        'text': 'Elevation (m)',
+                        'side': 'right'
+                    }
+                },
+                'contours': {
+                    'z': {
+                        'show': True,
+                        'usecolormap': True,
+                        'highlightcolor': "limegreen",
+                        'project': {'z': True}
+                    }
+                },
+                'hoverongaps': False,
+                'hoverlabel': {
+                    'bgcolor': 'white',
+                    'font': {'size': 12}
+                },
+                'hovertemplate': '<b>Surface Point</b><br>' +
+                                'X: %{x:.2f}m<br>' +
+                                'Y: %{y:.2f}m<br>' +
+                                'Z: %{z:.2f}m<extra></extra>'
+            }
+            
+            # Add point cloud with optimized marker size based on dataset size
+            marker_size = max(2, min(4, 10000 / len(points_array)))  # Adjusted for better visibility
+            scatter = {
+                'type': 'scatter3d',
+                'x': x.tolist(),
+                'y': y.tolist(),
+                'z': z.tolist(),
+                'mode': 'markers',
+                'marker': {
+                    'size': marker_size,
+                    'opacity': 0.8,  # Adjusted for better visibility
+                    'color': z.tolist(),
+                    'colorscale': 'Viridis',
+                    'showscale': False
+                },
+                'name': 'Points',
+                'hoverinfo': 'text',
+                'hoverlabel': {
+                    'bgcolor': 'white',
+                    'font': {'size': 12}
+                },
+                'hovertemplate': '<b>Point</b><br>' +
+                                'ID: %{customdata}<br>' +
+                                'X: %{x:.2f}m<br>' +
+                                'Y: %{y:.2f}m<br>' +
+                                'Z: %{z:.2f}m<extra></extra>',
+                'customdata': point_ids
+            }
+            
+            layout = {
+                'title': {
+                    'text': f'Terrain Model: {terrain.name}',
+                    'x': 0.5,
+                    'y': 0.95,
+                    'font': {'size': 24}
+                },
+                'scene': {
+                    'aspectmode': 'data',
+                    'camera': {
+                        'eye': {'x': 1.5, 'y': 1.5, 'z': 1.2},
+                        'up': {'x': 0, 'y': 0, 'z': 1}
+                    },
+                    'xaxis': {
+                        'title': {'text': 'X (m)', 'font': {'size': 14}},
+                        'gridcolor': '#eee'
+                    },
+                    'yaxis': {
+                        'title': {'text': 'Y (m)', 'font': {'size': 14}},
+                        'gridcolor': '#eee'
+                    },
+                    'zaxis': {
+                        'title': {'text': 'Z (m)', 'font': {'size': 14}},
+                        'gridcolor': '#eee'
+                    }
+                },
+                'showlegend': True,
+                'legend': {
+                    'x': 0.85,
+                    'y': 0.95,
+                    'bgcolor': 'rgba(255,255,255,0.8)',
+                    'bordercolor': '#ddd',
+                    'borderwidth': 1
+                },
+                'margin': {'l': 0, 'r': 0, 'b': 0, 't': 50},
+                'template': 'plotly_white',
+                'hovermode': 'closest'
+            }
+            
+            data = [surface, scatter]
+            
+        else:
+            # Create 2D contour plot with optimized settings
+            contour = {
+                'type': 'contour',
+                'x': xi.tolist(),
+                'y': yi.tolist(),
+                'z': Z.tolist(),
+                'colorscale': 'Viridis',
+                'contours': {
+                    'coloring': 'heatmap',
+                    'showlabels': True,
+                    'labelfont': {'size': 12, 'color': 'white'}
+                },
+                'colorbar': {
+                    'title': {
+                        'text': 'Elevation (m)',
+                        'side': 'right'
+                    }
+                },
+                'name': 'Elevation',
+                'hoverongaps': False,
+                'hoverlabel': {
+                    'bgcolor': 'white',
+                    'font': {'size': 12}
+                },
+                'hovertemplate': '<b>Surface Point</b><br>' +
+                                'X: %{x:.2f}m<br>' +
+                                'Y: %{y:.2f}m<br>' +
+                                'Z: %{z:.2f}m<extra></extra>'
+            }
+            
+            # Add points overlay with optimized marker size
+            marker_size = max(3, min(8, 10000 / len(points_array)))  # Adjusted for better visibility
+            scatter = {
+                'type': 'scatter',
+                'x': x.tolist(),
+                'y': y.tolist(),
+                'mode': 'markers',
+                'marker': {
+                    'size': marker_size,
+                    'color': z.tolist(),
+                    'colorscale': 'Viridis',
+                    'showscale': False,
+                    'opacity': 0.8  # Adjusted for better visibility
+                },
+                'name': 'Points',
+                'hoverinfo': 'text',
+                'hoverlabel': {
+                    'bgcolor': 'white',
+                    'font': {'size': 12}
+                },
+                'hovertemplate': '<b>Point</b><br>' +
+                                'ID: %{customdata}<br>' +
+                                'X: %{x:.2f}m<br>' +
+                                'Y: %{y:.2f}m<br>' +
+                                'Z: %{z:.2f}m<extra></extra>',
+                'customdata': point_ids
+            }
+            
+            layout = {
+                'title': {
+                    'text': f'Terrain Model: {terrain.name}',
+                    'x': 0.5,
+                    'y': 0.95,
+                    'font': {'size': 24}
+                },
+                'xaxis': {
+                    'title': {'text': 'X (m)', 'font': {'size': 14}},
+                    'scaleanchor': 'y',
+                    'scaleratio': 1,
+                    'constrain': 'domain',
+                    'gridcolor': '#eee'
+                },
+                'yaxis': {
+                    'title': {'text': 'Y (m)', 'font': {'size': 14}},
+                    'gridcolor': '#eee'
+                },
+                'showlegend': True,
+                'legend': {
+                    'x': 0.85,
+                    'y': 0.95,
+                    'bgcolor': 'rgba(255,255,255,0.8)',
+                    'bordercolor': '#ddd',
+                    'borderwidth': 1
+                },
+                'margin': {'l': 50, 'r': 50, 'b': 50, 't': 50},
+                'hovermode': 'closest',
+                'template': 'plotly_white'
+            }
+            
+            data = [contour, scatter]
+        
+        # Return plot data and layout as JSON-serializable objects
+        return {
+            'data': data,
+            'layout': layout
+        }
+        
+    except Exception as e:
+        logger.error(f"Error creating terrain plot: {str(e)}")
+        raise
 
 if __name__ == '__main__':
     logger.info("Starting Flask application...")

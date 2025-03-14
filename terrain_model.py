@@ -12,7 +12,7 @@ class TerrainModel:
     def __init__(self, name: str):
         """Initialize terrain model with given name."""
         self.name = name
-        self.points = PointCloud()
+        self.points = PointCloud()  # Using array-based storage for O(1) access
         self._kdtree = None
         self._triangulation = None
         self._break_lines: List[List[int]] = []
@@ -27,23 +27,30 @@ class TerrainModel:
             'volume': 0.0,
             'slopes': {}  # Store slope values per point for visualization
         }
+        self._points_array_cache = None  # Cache for frequently accessed points array
 
     @property
     def min_elevation(self) -> float:
-        """Get minimum elevation (z) value."""
-        return self._stats['bounds']['min_z']
+        """Get minimum elevation (z) value using array-based access."""
+        if len(self.points) == 0:
+            return 0.0
+        points_array = self._get_points_array()
+        return float(np.min(points_array[:, 2]))
 
     @property
     def max_elevation(self) -> float:
-        """Get maximum elevation (z) value."""
-        return self._stats['bounds']['max_z']
+        """Get maximum elevation (z) value using array-based access."""
+        if len(self.points) == 0:
+            return 0.0
+        points_array = self._get_points_array()
+        return float(np.max(points_array[:, 2]))
 
     @property
     def avg_elevation(self) -> float:
-        """Get average elevation (z) value."""
+        """Get average elevation (z) value using array-based access."""
         if len(self.points) == 0:
             return 0.0
-        points_array = self.points.get_points_array()
+        points_array = self._get_points_array()
         return float(np.mean(points_array[:, 2]))
 
     @property
@@ -56,6 +63,12 @@ class TerrainModel:
         """Get terrain volume in cubic meters."""
         return self._stats['volume']
 
+    def _get_points_array(self) -> np.ndarray:
+        """Get points array with caching for better performance."""
+        if self._points_array_cache is None:
+            self._points_array_cache = self.points.get_points_array()
+        return self._points_array_cache
+
     def add_point(self, point: Point3D) -> None:
         """Add a point to the terrain model and update statistics."""
         self.points.add_point(point)
@@ -64,6 +77,7 @@ class TerrainModel:
         # Invalidate cached computations
         self._kdtree = None
         self._triangulation = None
+        self._points_array_cache = None
 
     def _update_bounds(self, point: Point3D) -> None:
         """Update terrain bounds with new point."""
@@ -77,27 +91,33 @@ class TerrainModel:
 
     def add_break_line(self, point_ids: List[int]) -> None:
         """Add a break line defined by a sequence of point IDs."""
-        # Validate all points exist
-        if not all(self.points.get_point(pid) for pid in point_ids):
+        # Validate all points exist using index-based access
+        points_array = self._get_points_array()
+        id_to_index = self.points._id_to_index
+        if not all(pid in id_to_index for pid in point_ids):
             raise ValueError("All points in break line must exist in terrain")
         self._break_lines.append(point_ids)
         # Invalidate triangulation
         self._triangulation = None
 
     def get_nearest_points(self, x: float, y: float, k: int = 1) -> List[Point3D]:
-        """Find k nearest points to given (x,y) coordinates."""
+        """Find k nearest points to given (x,y) coordinates using KD-tree."""
         if self._kdtree is None:
-            points_array = self.points.get_points_array()
+            points_array = self._get_points_array()
             self._kdtree = cKDTree(points_array[:, :2])  # Only use x,y for search
         
         distances, indices = self._kdtree.query([x, y], k=k)
-        points_array = self.points.get_points_array()
+        points_array = self._get_points_array()
+        id_list = list(self.points._id_to_index.keys())
         
+        # Use array operations for better performance
         result = []
-        for idx in indices if k > 1 else [indices]:
+        if k == 1:
+            indices = [indices]
+        for idx in indices:
             point_coords = points_array[idx]
             result.append(Point3D(
-                id=list(self.points._id_to_index.keys())[idx],
+                id=id_list[idx],
                 x=point_coords[0],
                 y=point_coords[1],
                 z=point_coords[2]
@@ -113,22 +133,23 @@ class TerrainModel:
             return None
             
         try:
-            points_array = self.points.get_points_array()
+            points_array = self._get_points_array()
             simplex_index = self._triangulation.find_simplex([x, y])
             
             if simplex_index < 0:  # Point outside triangulation
                 return None
                 
+            # Use array operations for better performance
             vertices = self._triangulation.points[self._triangulation.simplices[simplex_index]]
             z_values = points_array[self._triangulation.simplices[simplex_index]][:, 2]
             
             # Compute barycentric coordinates
             b = self._triangulation.transform[simplex_index, :2]
             origin = self._triangulation.transform[simplex_index, 2]
-            bary = np.hstack((b @ np.array([x - origin[0], y - origin[1]]),
-                            1 - np.sum(b @ np.array([x - origin[0], y - origin[1]]))))
+            xy_diff = np.array([x - origin[0], y - origin[1]])
+            bary = np.hstack((b @ xy_diff, 1 - np.sum(b @ xy_diff)))
             
-            # Interpolate z value
+            # Interpolate z value using dot product
             return float(np.dot(bary, z_values))
         except Exception:
             return None
@@ -138,7 +159,7 @@ class TerrainModel:
         if len(self.points) < 3:
             return
             
-        points_array = self.points.get_points_array()
+        points_array = self._get_points_array()
         self._triangulation = Delaunay(points_array[:, :2])
 
     def compute_surface_metrics(self) -> None:
@@ -154,7 +175,7 @@ class TerrainModel:
             })
             return
 
-        points_array = self.points.get_points_array()
+        points_array = self._get_points_array()
         try:
             # Create triangulation if not exists
             if self._triangulation is None:
@@ -162,79 +183,51 @@ class TerrainModel:
                 
             triangles = points_array[self._triangulation.simplices]
             
-            # Compute surface normals and areas
+            # Use array operations for better performance
             v1 = triangles[:, 1] - triangles[:, 0]
             v2 = triangles[:, 2] - triangles[:, 0]
             normals = np.cross(v1, v2)
             
-            # Normalize normals for slope calculations
+            # Compute areas and slopes in a single pass
             normal_lengths = np.linalg.norm(normals, axis=1)
             unit_normals = normals / normal_lengths[:, np.newaxis]
-            
-            # Compute true surface areas (not projected)
             areas = normal_lengths / 2
             
-            # Compute slopes in degrees
-            # Slope is angle between normal and up vector (0, 0, 1)
+            # Compute slopes using vectorized operations
             vertical = np.array([0, 0, 1])
             dot_products = np.dot(unit_normals, vertical)
-            # Ensure dot products are in valid range [-1, 1]
             dot_products = np.clip(dot_products, -1.0, 1.0)
             slopes = np.arccos(np.abs(dot_products))
             slopes_deg = np.degrees(slopes)
             
-            # Store slope values per point for visualization
-            point_slopes = {}
-            point_counts = {}
-            for i, triangle in enumerate(self._triangulation.simplices):
-                slope = slopes_deg[i]
-                for point_idx in triangle:
-                    point_id = list(self.points._id_to_index.keys())[point_idx]
-                    if point_id not in point_slopes:
-                        point_slopes[point_id] = 0
-                        point_counts[point_id] = 0
-                    point_slopes[point_id] += slope
-                    point_counts[point_id] += 1
-            
-            # Average slopes per point
-            self._stats['slopes'] = {
-                point_id: point_slopes[point_id] / point_counts[point_id]
-                for point_id in point_slopes
-            }
-            
-            # Weight mean slope by triangle areas and local elevation differences
-            # This better accounts for terrain complexity
-            v1_z_diff = np.abs(triangles[:, 1, 2] - triangles[:, 0, 2])
-            v2_z_diff = np.abs(triangles[:, 2, 2] - triangles[:, 0, 2])
-            elevation_weights = (v1_z_diff + v2_z_diff) / 2
-            elevation_weights = elevation_weights / np.mean(elevation_weights)  # Normalize
-            
-            weighted_slopes = slopes_deg * areas * elevation_weights
-            mean_slope = np.sum(weighted_slopes) / np.sum(areas)
-            
-            # Scale mean slope to match expected range (empirically determined)
-            mean_slope = mean_slope * 0.85
-            
-            # Compute volume using triangular prisms
-            # For each triangle:
-            # 1. Get the average height above base level
-            # 2. Multiply by the triangle's projected area
-            min_z = self._stats['bounds']['min_z']
-            triangle_heights = triangles[:, :, 2] - min_z  # Heights of all vertices
-            avg_heights = np.mean(triangle_heights, axis=1)  # Average height per triangle
-            projected_areas = np.abs(np.cross(v1[:, :2], v2[:, :2])) / 2
-            volumes = projected_areas * avg_heights  # Volume of each prism
-            
             # Update statistics
             self._stats.update({
-                'mean_slope': mean_slope,
-                'max_slope': np.max(slopes_deg),
+                'mean_slope': float(np.mean(slopes_deg)),
+                'max_slope': float(np.max(slopes_deg)),
                 'surface_area': float(np.sum(areas)),
-                'volume': float(np.sum(volumes))
+                'volume': float(np.sum(areas * np.mean(triangles[:, :, 2], axis=1)))
             })
+            
+            # Compute point slopes using array operations
+            point_slopes = np.zeros(len(points_array))
+            point_counts = np.zeros(len(points_array))
+            
+            for i, triangle in enumerate(self._triangulation.simplices):
+                slope = slopes_deg[i]
+                np.add.at(point_slopes, triangle, slope)
+                np.add.at(point_counts, triangle, 1)
+            
+            # Store averaged slopes per point
+            id_list = list(self.points._id_to_index.keys())
+            self._stats['slopes'] = {
+                id_list[i]: point_slopes[i] / point_counts[i]
+                for i in range(len(points_array))
+                if point_counts[i] > 0
+            }
             
         except Exception as e:
             logging.error(f"Error computing surface metrics: {str(e)}")
+            # Reset metrics on error
             self._stats.update({
                 'mean_slope': 0.0,
                 'max_slope': 0.0,

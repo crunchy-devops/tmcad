@@ -127,7 +127,9 @@ document.addEventListener('DOMContentLoaded', function() {
             
             if (response.ok) {
                 showSuccess('Terrain imported successfully');
-                plotContainer.innerHTML = data.plot;
+                // Create new plot div to ensure clean state
+                plotContainer.innerHTML = '<div id="terrain-plot"></div>';
+                Plotly.newPlot('terrain-plot', data.plot.data, data.plot.layout);
                 displayMetrics(data.metrics);
                 await updateModelsList();
             } else {
@@ -151,7 +153,9 @@ document.addEventListener('DOMContentLoaded', function() {
             
             if (response.ok) {
                 showSuccess('Terrain loaded successfully');
-                plotContainer.innerHTML = data.plot;
+                // Create new plot div to ensure clean state
+                plotContainer.innerHTML = '<div id="terrain-plot"></div>';
+                Plotly.newPlot('terrain-plot', data.plot.data, data.plot.layout);
                 displayMetrics(data.metrics);
             } else {
                 showError(data.error || 'Failed to load terrain');
