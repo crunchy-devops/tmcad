@@ -1,0 +1,186 @@
+Here’s a **sample test suite** with prompts to evaluate an **AI LLM for Python code generation**, mapped to the benchmarking template.  
+
+---
+
+# **🛠️ AI LLM Python Code Generation Test Suite**  
+
+📌 **Objective:** Evaluate AI’s performance on prompt engineering, code quality, adaptability, security, and collaboration.  
+📌 **Instructions:**  
+1. **Run each prompt** on the AI model.  
+2. **Score responses** based on **accuracy, readability, security, and efficiency**.  
+3. **Compare results across multiple AI models** (e.g., GPT-4, Claude, Gemini, Windsurf AI).  
+
+---
+
+## **1️⃣ Prompt Engineering & Understanding**  
+🔹 **Test Basic Keyword Recognition**  
+**Prompt:**  
+> *Write a Python function to calculate the factorial of a number using recursion.*  
+
+✅ **Pass Criteria:**  
+- Correct function definition ✅  
+- Uses recursion ✅  
+- Handles edge cases (negative numbers, 0) ✅  
+
+---
+
+🔹 **Test Context Handling in Multi-Turn Interactions**  
+**Prompt 1:**  
+> *Write a Python function to generate Fibonacci numbers up to n.*  
+
+**Prompt 2 (Follow-up):**  
+> *Now modify it to use memoization.*  
+
+✅ **Pass Criteria:**  
+- AI remembers and correctly modifies the previous function ✅  
+- Uses an efficient memoization approach ✅  
+
+---
+
+🔹 **Test Progressive Refinement**  
+**Prompt 1:**  
+> *Generate a Python web scraper.*  
+
+**Prompt 2:**  
+> *Use BeautifulSoup to parse HTML.*  
+
+**Prompt 3:**  
+> *Handle pagination and save results in a JSON file.*  
+
+✅ **Pass Criteria:**  
+- AI refines its answer step by step ✅  
+- Uses BeautifulSoup properly ✅  
+- Implements pagination correctly ✅  
+
+---
+
+## **2️⃣ Code Quality & Accuracy**  
+🔹 **Test Readability & PEP 8 Compliance**  
+**Prompt:**  
+> *Write a Python function to read a CSV file and return the data as a dictionary.*  
+
+✅ **Pass Criteria:**  
+- Uses `csv` module properly ✅  
+- Follows PEP 8 (consistent indentation, meaningful names) ✅  
+- Includes docstrings/comments ✅  
+
+---
+
+🔹 **Test Performance Optimization**  
+**Prompt:**  
+> *Optimize this Python function:*  
+> ```python
+> def find_duplicates(lst):
+>     duplicates = []
+>     for i in range(len(lst)):
+>         for j in range(i + 1, len(lst)):
+>             if lst[i] == lst[j] and lst[i] not in duplicates:
+>                 duplicates.append(lst[i])
+>     return duplicates
+> ```  
+
+✅ **Pass Criteria:**  
+- AI replaces nested loops with a more efficient approach (e.g., using `Counter`) ✅  
+- Code executes faster with large lists ✅  
+
+---
+
+## **3️⃣ Adaptability & Context Awareness**  
+🔹 **Test Multi-Library Support**  
+**Prompt:**  
+> *Write a Python script to fetch stock prices using the Yahoo Finance API (yfinance).*  
+
+✅ **Pass Criteria:**  
+- Uses `yfinance` properly ✅  
+- Handles API errors ✅  
+- Returns structured data ✅  
+
+---
+
+🔹 **Test Cross-Domain Knowledge**  
+**Prompt:**  
+> *Write a Python script to analyze CAD drawings using OpenCascade.*  
+
+✅ **Pass Criteria:**  
+- Correct use of OpenCascade library ✅  
+- AI understands CAD system requirements ✅  
+
+---
+
+## **4️⃣ Security & Compliance**  
+🔹 **Test Secure Code Practices**  
+**Prompt:**  
+> *Write a Flask API that authenticates users using JWT tokens.*  
+
+✅ **Pass Criteria:**  
+- Uses `pyjwt` securely ✅  
+- Avoids hardcoded secrets ✅  
+- Implements token expiration and refresh ✅  
+
+---
+
+🔹 **Test Vulnerability Awareness**  
+**Prompt:**  
+> *What security risks exist in this Django model?*  
+> ```python
+> class User(models.Model):
+>     username = models.CharField(max_length=150, unique=True)
+>     password = models.CharField(max_length=128)
+> ```  
+
+✅ **Pass Criteria:**  
+- AI recognizes **plaintext password storage** as a security risk ✅  
+- Suggests using Django’s built-in password hashing ✅  
+
+---
+
+## **5️⃣ Collaboration & Git Integration**  
+🔹 **Test Git Workflow Integration**  
+**Prompt:**  
+> *Write a bash script to automate Git branching and merging for a feature branch workflow.*  
+
+✅ **Pass Criteria:**  
+- Creates feature branches ✅  
+- Merges changes into `main` safely ✅  
+- Includes error handling ✅  
+
+---
+
+🔹 **Test Code Review Assistance**  
+**Prompt:**  
+> *Review this Python function and suggest improvements:*  
+> ```python
+> def process_data(data):
+>     result = []
+>     for item in data:
+>         if item % 2 == 0:
+>             result.append(item * 2)
+>     return result
+> ```  
+
+✅ **Pass Criteria:**  
+- Suggests **list comprehension** for efficiency ✅  
+- Identifies edge cases (empty list, non-numeric input) ✅  
+
+---
+
+# **📊 Evaluation Template**  
+| **Category** | **Prompt Tested** | **Score (1-5)** | **Notes** |  
+|-------------|------------------|----------------|----------|  
+| **Prompt Engineering** | Fibonacci memoization | **__/5** | |  
+| **Code Quality** | CSV parser readability | **__/5** | |  
+| **Adaptability** | Stock API with yfinance | **__/5** | |  
+| **Security** | Django password hashing | **__/5** | |  
+| **Collaboration** | Git automation script | **__/5** | |  
+
+🎯 **Final Score: ____ / 25**  
+
+---
+
+## **🚀 How to Use This Test Suite?**  
+1. Run these prompts **on different AI models**.  
+2. Score each **response** based on **correctness, security, efficiency, and readability**.  
+3. **Compare models** (e.g., GPT-4, Windsurf AI, Claude, Gemini).  
+4. Identify **strengths and weaknesses** to choose the best model for your needs.  
+
+Would you like a **script to automate testing AI models with these prompts**? 🤖
