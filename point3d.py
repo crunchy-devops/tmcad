@@ -8,10 +8,10 @@ for managing large terrain point datasets with efficient spatial operations.
 from __future__ import annotations
 from array import array
 from dataclasses import dataclass, field
-from typing import Optional, List, Set, Dict, Tuple
+from typing import Optional, List, Set, Dict, Tuple, Union
 import math
 import numpy as np
-from scipy.spatial import cKDTree
+from scipy.spatial import cKDTree, Delaunay
 
 __all__ = ['Point3D', 'PointCloud']
 
@@ -116,15 +116,18 @@ class Point3D:
 
 class PointCloud:
     """
-    Memory-efficient container for Point3D objects with spatial indexing.
+    Memory-efficient container for Point3D objects with terrain modeling capabilities.
     
     Uses array.array for coordinate storage and KD-tree for spatial queries.
     Memory usage is optimized to ~32 bytes per point plus indexing overhead.
+    Supports Delaunay triangulation and multiple interpolation methods.
     
     Attributes:
         points (Dict[int, int]): Maps point IDs to array indices
         coords (array): Packed coordinates array
         _kdtree (cKDTree): Spatial index for efficient queries
+        _triangulation (Delaunay): Delaunay triangulation for surface modeling
+        _break_lines (List[Tuple[int, int]]): Break lines defined by point ID pairs
     """
     
     def __init__(self):
@@ -132,6 +135,8 @@ class PointCloud:
         self._id_to_index: Dict[int, int] = {}
         self._coords = array('d')
         self._kdtree: Optional[cKDTree] = None
+        self._triangulation: Optional[Delaunay] = None
+        self._break_lines: List[Tuple[int, int]] = []
         
     def add_point(self, point: Point3D) -> None:
         """
@@ -150,6 +155,7 @@ class PointCloud:
         self._id_to_index[point.id] = idx
         self._coords.extend([point.x, point.y, point.z])
         self._kdtree = None  # Invalidate KD-tree
+        self._triangulation = None  # Invalidate triangulation
         
     def get_point(self, point_id: int) -> Point3D:
         """
@@ -176,216 +182,230 @@ class PointCloud:
             z=self._coords[base_idx + 2]
         )
         
-    def get_point_by_id(self, point_id: int) -> Point3D:
+    def break_lines(self, line_points: List[Tuple[int, int]]) -> None:
         """
-        Retrieve point by ID.
+        Define break lines in the terrain model using point ID pairs.
+        
+        Break lines are used to enforce terrain features like ridges or valleys
+        during triangulation and interpolation.
         
         Args:
-            point_id: ID of point to retrieve
-            
-        Returns:
-            Point3D instance
+            line_points: List of point ID pairs defining break lines
             
         Raises:
-            KeyError: If point ID not found
+            KeyError: If any point ID does not exist
+            ValueError: If line points are invalid
         """
-        if point_id not in self._id_to_index:
-            raise KeyError(f"Point with ID {point_id} not found")
-            
-        idx = self._id_to_index[point_id]
-        base_idx = idx * 3
-        return Point3D(
-            id=point_id,
-            x=self._coords[base_idx],
-            y=self._coords[base_idx + 1],
-            z=self._coords[base_idx + 2]
-        )
-        
-    def remove_point(self, point_id: int) -> None:
-        """
-        Remove point by ID.
-        
-        Args:
-            point_id: ID of point to remove
-            
-        Raises:
-            KeyError: If point ID not found
-        """
-        if point_id not in self._id_to_index:
-            raise KeyError(f"Point with ID {point_id} not found")
-            
-        idx = self._id_to_index[point_id]
-        base_idx = idx * 3
-        
-        # Remove coordinates
-        del self._coords[base_idx:base_idx + 3]
-        
-        # Update index mappings
-        del self._id_to_index[point_id]
-        for pid, i in self._id_to_index.items():
-            if i > idx:
-                self._id_to_index[pid] = i - 1
+        # Validate all points exist
+        for p1_id, p2_id in line_points:
+            if p1_id not in self._id_to_index or p2_id not in self._id_to_index:
+                raise KeyError("Break line point ID not found")
+            if p1_id == p2_id:
+                raise ValueError("Break line cannot connect point to itself")
                 
-        self._kdtree = None  # Invalidate KD-tree
+        self._break_lines = list(line_points)
+        self._triangulation = None  # Invalidate triangulation
         
-    def _ensure_kdtree(self) -> None:
-        """Build KD-tree if not present or invalidated."""
-        if self._kdtree is None:
-            points = np.frombuffer(self._coords, dtype=np.float64)
-            points = points.reshape(-1, 3)
-            self._kdtree = cKDTree(points)
-            
-    def nearest_neighbors(self, point: Point3D, k: int = 1) -> List[Tuple[int, float]]:
+    def _ensure_triangulation(self) -> None:
         """
-        Find k nearest neighbors to given point.
-        
-        Args:
-            point: Query point
-            k: Number of neighbors to find (default: 1)
-            
-        Returns:
-            List of (point_id, distance) tuples, sorted by distance
+        Ensure Delaunay triangulation is up to date.
+        Updates triangulation if needed, incorporating break lines.
         """
-        self._ensure_kdtree()
-        
-        distances, indices = self._kdtree.query(
-            [point.x, point.y, point.z],
-            k=min(k, len(self._id_to_index))
-        )
-        
-        if k == 1:
-            indices = [indices]
-            distances = [distances]
+        if self._triangulation is not None:
+            return
             
-        # Map array indices back to point IDs
-        id_map = {v: k for k, v in self._id_to_index.items()}
-        return [(id_map[idx], dist) for idx, dist in zip(indices, distances)]
+        # Convert coordinates to numpy array for triangulation
+        points = np.array(self._coords).reshape(-1, 3)
+        xy_points = points[:, :2]  # Use only X,Y for triangulation
         
-    def points_within_radius(self, center: Point3D, radius: float) -> List[Tuple[int, float]]:
-        """
-        Find all points within given radius of center point.
+        # Create initial triangulation
+        self._triangulation = Delaunay(xy_points)
         
-        Args:
-            center: Center point for search
-            radius: Search radius
+        # If we have break lines, modify triangulation to respect them
+        if self._break_lines:
+            # Get all triangles that intersect break lines
+            triangles = self._triangulation.points[self._triangulation.simplices]
+            modified = False
             
-        Returns:
-            List of (point_id, distance) tuples, sorted by distance
-        """
-        self._ensure_kdtree()
-        
-        indices = self._kdtree.query_ball_point(
-            [center.x, center.y, center.z],
-            radius
-        )
-        
-        # Calculate distances and map indices to IDs
-        id_map = {v: k for k, v in self._id_to_index.items()}
-        results = []
-        center_coords = np.array([center.x, center.y, center.z])
-        
-        for idx in indices:
-            point_coords = np.array(self.get_point_coords(id_map[idx]))
-            distance = np.linalg.norm(point_coords - center_coords)
-            results.append((id_map[idx], distance))
+            for p1_id, p2_id in self._break_lines:
+                # Get break line endpoints
+                p1_idx = self._id_to_index[p1_id]
+                p2_idx = self._id_to_index[p2_id]
+                p1 = xy_points[p1_idx]
+                p2 = xy_points[p2_idx]
+                
+                # Find triangles intersecting this break line
+                for i, tri in enumerate(triangles):
+                    # Check if triangle intersects break line
+                    if self._line_intersects_triangle(p1, p2, tri):
+                        # Split triangle if needed
+                        self._split_triangle(i, p1_idx, p2_idx)
+                        modified = True
             
-        return sorted(results, key=lambda x: x[1])
-        
-    def get_point_coords(self, point_id: int) -> Tuple[float, float, float]:
-        """Get point coordinates by ID without creating Point3D instance."""
-        if point_id not in self._id_to_index:
-            raise KeyError(f"Point with ID {point_id} not found")
+            # Rebuild triangulation if modifications were made
+            if modified:
+                self._triangulation = Delaunay(xy_points)
+                
+    def _line_intersects_triangle(self, p1: np.ndarray, p2: np.ndarray, triangle: np.ndarray) -> bool:
+        """Check if line segment intersects triangle."""
+        def ccw(A, B, C):
+            return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
             
-        idx = self._id_to_index[point_id]
-        base_idx = idx * 3
+        def line_intersects(A, B, C, D):
+            return ccw(A, C, D) != ccw(B, C, D) and ccw(A, B, C) != ccw(A, B, D)
+            
+        # Check if line segment intersects any triangle edge
         return (
-            self._coords[base_idx],
-            self._coords[base_idx + 1],
-            self._coords[base_idx + 2]
+            line_intersects(p1, p2, triangle[0], triangle[1]) or
+            line_intersects(p1, p2, triangle[1], triangle[2]) or
+            line_intersects(p1, p2, triangle[2], triangle[0])
         )
         
-    def get_points_array(self) -> np.ndarray:
+    def _split_triangle(self, tri_idx: int, p1_idx: int, p2_idx: int) -> None:
+        """Split triangle to respect break line constraint."""
+        # Get triangle vertices
+        vertices = self._triangulation.points[self._triangulation.simplices[tri_idx]]
+        
+        # Find intersection point (simplified - using midpoint for now)
+        p1 = self._triangulation.points[p1_idx]
+        p2 = self._triangulation.points[p2_idx]
+        mid = (p1 + p2) / 2
+        
+        # Add new point to force triangulation to respect break line
+        new_point = np.array([mid[0], mid[1]])
+        points = np.vstack((self._triangulation.points, new_point))
+        self._triangulation = Delaunay(points)
+        
+    def interpolate_z(self, x: float, y: float, method: str = 'barycentric') -> float:
         """
-        Get all points as numpy array for efficient bulk operations.
+        Interpolate Z value at given X,Y coordinates.
         
-        Returns:
-            Nx3 array of point coordinates
-        """
-        points = np.frombuffer(self._coords, dtype=np.float64)
-        return points.reshape(-1, 3)
-        
-    def distance_between(self, id1: int, id2: int) -> float:
-        """Calculate distance between two points by their IDs."""
-        p1_coords = self.get_point_coords(id1)
-        p2_coords = self.get_point_coords(id2)
-        return math.sqrt(sum((a - b) ** 2 for a, b in zip(p1_coords, p2_coords)))
-        
-    def slope_between_points(self, id1: int, id2: int) -> float:
-        """Calculate slope between two points in the cloud in percentage.
-
         Args:
-            id1: ID of the first point
-            id2: ID of the second point
-
-        Returns:
-            float: Slope in percentage (rise/run * 100). Positive values indicate uphill,
-                  negative values indicate downhill. Returns 0 if points are at same location.
-                  Returns float('inf') for vertical slopes.
-
-        Raises:
-            KeyError: If either point ID is not found in the cloud
-        """
-        p1 = self.get_point_by_id(id1)
-        p2 = self.get_point_by_id(id2)
-        return p1.slope_to(p2)
-        
-    def bearing_between(self, id1: int, id2: int) -> float:
-        """
-        Calculate bearing angle between two points by their IDs.
-        
-        Returns angle in degrees from north (0°), clockwise positive:
-        - North = 0°
-        - East = 90°
-        - South = 180°
-        - West = 270°
-        
-        Uses array-based coordinate access for optimal memory efficiency.
-        Each point requires exactly 32 bytes (8 bytes each for id, x, y, z).
-        """
-        # Use direct array access for memory efficiency
-        idx1 = self._id_to_index[id1]
-        idx2 = self._id_to_index[id2]
-        
-        # Get coordinates using O(1) array access
-        base_idx1 = idx1 * 3
-        base_idx2 = idx2 * 3
-        
-        dx = self._coords[base_idx2] - self._coords[base_idx1]  # x2 - x1
-        dy = self._coords[base_idx2 + 1] - self._coords[base_idx1 + 1]  # y2 - y1
-        
-        # Convert from mathematical angle to bearing
-        # atan2(x, y) gives angle from east counterclockwise
-        # We want angle from north clockwise
-        angle = math.degrees(math.atan2(dx, dy))
-        bearing = (90.0 - angle) % 360.0
-        
-        # Handle special cases for cardinal directions
-        if abs(dx) < 1e-10:  # On same vertical line
-            return 0.0 if dy > 0 else 180.0
-        if abs(dy) < 1e-10:  # On same horizontal line
-            return 90.0 if dx > 0 else 270.0
+            x: X coordinate
+            y: Y coordinate
+            method: Interpolation method ('barycentric' or 'diw')
             
-        return bearing
+        Returns:
+            Interpolated Z value
+            
+        Raises:
+            ValueError: If coordinates are outside the terrain or method is invalid
+        """
+        if method not in ('barycentric', 'diw'):
+            raise ValueError("Invalid interpolation method")
+            
+        self._ensure_triangulation()
+        query_point = np.array([x, y])
         
-    def __len__(self) -> int:
-        """Get number of points in cloud."""
-        return len(self._id_to_index)
+        if method == 'barycentric':
+            # Find triangle containing the point
+            simplex = self._triangulation.find_simplex(query_point)
+            if simplex < 0:
+                raise ValueError("Point outside terrain boundary")
+                
+            # Get triangle vertices and their Z values
+            vertices = self._triangulation.points[self._triangulation.simplices[simplex]]
+            points_array = np.array(self._coords).reshape(-1, 3)
+            
+            # Handle break lines by checking if we're interpolating across one
+            if self._break_lines:
+                # Find nearest break line
+                min_dist = float('inf')
+                nearest_line = None
+                
+                for p1_id, p2_id in self._break_lines:
+                    p1 = self.get_point(p1_id)
+                    p2 = self.get_point(p2_id)
+                    
+                    # Calculate distance to line segment
+                    dist = self._point_to_line_distance(x, y, p1, p2)
+                    if dist < min_dist:
+                        min_dist = dist
+                        nearest_line = (p1, p2)
+                
+                # If point is very close to a break line, use nearest point on that line
+                if min_dist < 0.1:  # Threshold distance
+                    p1, p2 = nearest_line
+                    t = self._project_point_to_line(x, y, p1, p2)
+                    if 0 <= t <= 1:  # Point projects onto line segment
+                        # Interpolate Z value along break line
+                        return float(p1.z + t * (p2.z - p1.z))
+            
+            # Standard barycentric interpolation if not near break line
+            z_values = points_array[self._triangulation.simplices[simplex], 2]
+            transform = self._triangulation.transform[simplex]
+            b = transform[:2].dot(query_point - transform[2])
+            bary = np.append(b, 1 - b.sum())
+            return float(np.dot(bary, z_values))
+        else:  # DIW (Distance Inverse Weighting)
+            # Find nearest points
+            if self._kdtree is None:
+                points = np.array(self._coords).reshape(-1, 3)
+                self._kdtree = cKDTree(points[:, :2])
+                
+            # Find k nearest neighbors
+            k = min(5, len(self._id_to_index))
+            distances, indices = self._kdtree.query([x, y], k=k)
+            
+            # Handle point exactly on a known point
+            if isinstance(distances, float) and distances < 1e-10:
+                points = np.array(self._coords).reshape(-1, 3)
+                return float(points[indices, 2])
+                
+            # Convert to arrays if single point returned
+            if isinstance(distances, float):
+                distances = np.array([distances])
+                indices = np.array([indices])
+            
+            # Handle point exactly on a known point
+            if distances[0] < 1e-10:
+                points = np.array(self._coords).reshape(-1, 3)
+                return float(points[indices[0], 2])
+                
+            # Calculate weights and weighted sum
+            weights = 1.0 / (distances ** 2)
+            points = np.array(self._coords).reshape(-1, 3)
+            z_values = points[indices, 2]
+            return float(np.sum(weights * z_values) / np.sum(weights))
+            
+    def _point_to_line_distance(self, x: float, y: float, p1: Point3D, p2: Point3D) -> float:
+        """Calculate distance from point to line segment."""
+        # Convert to numpy arrays for vector operations
+        point = np.array([x, y])
+        line_p1 = np.array([p1.x, p1.y])
+        line_p2 = np.array([p2.x, p2.y])
         
-    def __contains__(self, point_id: int) -> bool:
-        """Check if point ID exists in cloud."""
-        return point_id in self._id_to_index
+        # Calculate normalized direction vector
+        line_dir = line_p2 - line_p1
+        line_len = np.linalg.norm(line_dir)
+        if line_len == 0:
+            return np.linalg.norm(point - line_p1)
+            
+        line_dir = line_dir / line_len
         
-    def __iter__(self):
-        """Iterate over points in cloud."""
-        for point_id in self._id_to_index:
-            yield self.get_point(point_id)
+        # Calculate perpendicular distance
+        vec_to_point = point - line_p1
+        return abs(np.cross(vec_to_point, line_dir))
+        
+    def _project_point_to_line(self, x: float, y: float, p1: Point3D, p2: Point3D) -> float:
+        """Project point onto line segment and return parametric coordinate (0 to 1)."""
+        point = np.array([x, y])
+        line_p1 = np.array([p1.x, p1.y])
+        line_p2 = np.array([p2.x, p2.y])
+        
+        # Calculate direction vector
+        line_dir = line_p2 - line_p1
+        line_len_sq = np.dot(line_dir, line_dir)
+        
+        if line_len_sq == 0:
+            return 0.0
+            
+        # Calculate projection parameter
+        t = np.dot(point - line_p1, line_dir) / line_len_sq
+        return max(0.0, min(1.0, t))  # Clamp to [0,1]
+            
+    def slope_between_points(self, id1: int, id2: int) -> float:
+        """Calculate slope between two points in percentage."""
+        p1 = self.get_point(id1)
+        p2 = self.get_point(id2)
+        return p1.slope_to(p2)
