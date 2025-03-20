@@ -1,0 +1,8 @@
+Prompt: Develop a high-performance Point3D class in Python with: Unique ID (long long) and float coordinates (x, y, z). Optimized memory storage using efficient Python types.
+ C extension (Cython or ctypes) for performance improvements.
+Create a PointCloud class as a collection of Point3D instances,
+implementing: Geometric operations: Distance computation between two points using their IDs. Slope calculation in percentage. Bearing angle computation.
+ KD-tree spatial indexing for fast nearest-neighbor searches.
+Code adherence to PEP8 and detailed docstrings.
+Performance benchmarks for 100,000 Point3D instances.
+ Unit tests ensuring at least 80% test coverage.
