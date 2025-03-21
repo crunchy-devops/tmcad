@@ -1,28 +1,15 @@
-import os
-from setuptools import setup, Extension
-from Cython.Build import cythonize
-import numpy
-
-extensions = [
-    Extension(
-        "point3d",
-        ["point3d.pyx"],
-        include_dirs=[numpy.get_include()],
-        extra_compile_args=["/O2"] if os.name == 'nt' else ["-O3"],
-        define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")]
-    )
-]
+from setuptools import setup
 
 setup(
-    name="point3d",
-    ext_modules=cythonize(
-        extensions,
-        compiler_directives={
-            'language_level': 3,
-            'boundscheck': False,
-            'wraparound': False,
-            'cdivision': True,
-            'initializedcheck': False
-        }
-    )
+    name='tmcad',
+    version='0.1',
+    description='Memory-efficient terrain point management system',
+    author='Your Name',
+    author_email='your.email@example.com',
+    packages=['tmcad'],
+    install_requires=[
+        'numpy>=1.21.0',
+        'scipy>=1.7.0'
+    ],
+    python_requires='>=3.7'
 )

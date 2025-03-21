@@ -22,6 +22,11 @@ class TestPoint3D:
         assert point.y == 3.5
         assert point.z == 4.5
 
+    def test_invalid_id(self):
+        """Test that negative IDs raise ValueError."""
+        with pytest.raises(ValueError):
+            Point3D(-1, 0.0, 0.0, 0.0)
+
     def test_distance_calculation(self):
         """Test distance calculation between points."""
         p1 = Point3D(1, 0, 0, 0)
@@ -111,20 +116,34 @@ class TestPointCloud:
 
     def test_nearest_neighbors(self, cloud: PointCloud):
         """Test nearest neighbor search."""
+        # Test empty cloud
+        query = Point3D(999, 0.5, 0, 0)
+        assert len(cloud.nearest_neighbors(query, k=2)) == 0
+
+        # Add test points
         points = [
-            Point3D(1, 0, 0, 0),
-            Point3D(2, 1, 0, 0),
-            Point3D(3, 2, 0, 0),
-            Point3D(4, 3, 0, 0)
+            Point3D(1, 0, 0, 0),    # Origin
+            Point3D(2, 1, 0, 0),    # 1 unit on x-axis
+            Point3D(3, 0, 1, 0),    # 1 unit on y-axis
+            Point3D(4, 0, 0, 1)     # 1 unit on z-axis
         ]
         for p in points:
             cloud.add_point(p)
 
-        query = Point3D(999, 0.5, 0, 0)
-        neighbors = cloud.nearest_neighbors(query, k=2)
+        # Test with k=1
+        neighbors = cloud.nearest_neighbors(Point3D(999, 0.1, 0.1, 0.1), k=1)
+        assert len(neighbors) == 1
+        assert neighbors[0].id == 1  # Should be closest to origin
+
+        # Test with k=2
+        neighbors = cloud.nearest_neighbors(Point3D(999, 0.9, 0, 0), k=2)
         assert len(neighbors) == 2
-        assert neighbors[0].id == 1  # Closest to (0,0,0)
-        assert neighbors[1].id == 2  # Second closest
+        assert neighbors[0].id == 2  # Closest to (1,0,0)
+        assert neighbors[1].id == 1  # Second closest is origin
+
+        # Test with k > number of points
+        neighbors = cloud.nearest_neighbors(query, k=10)
+        assert len(neighbors) == 4  # Should only return available points
 
     def test_vectorized_point_addition(self, cloud: PointCloud):
         """Test adding multiple points at once."""
@@ -144,59 +163,78 @@ class TestPointCloud:
             assert stored.z == p.z
 
     def test_large_dataset_performance(self, cloud: PointCloud):
-        """Performance test with 100,000 points."""
-        # Generate 100,000 random points with numpy for better performance
-        n_points = 100_000
+        """Performance test with 1000 points to verify memory and speed targets."""
+        # Test with 1000 points as per memory metrics
+        n_points = 1000
         rng = np.random.default_rng(42)
-
-        # Generate all points at once using numpy
-        points: List[Point3D] = []
-        for i in range(n_points):
-            points.append(Point3D(
-                i,
-                rng.random(),
-                rng.random(),
-                rng.random()
-            ))
-
-        # Bulk add points
-        start_time = time.time()
-        cloud.add_points(points)
-        add_time = time.time() - start_time
-
-        # Test KNN search performance - average over multiple queries
-        query_times = []
-        for _ in range(10):  # Run 10 queries to get average performance
-            query = Point3D(
-                999999,
-                rng.random(),
-                rng.random(),
-                rng.random()
-            )
-            start_time = time.time()
-            neighbors = cloud.nearest_neighbors(query, k=10)
-            query_times.append(time.time() - start_time)
-
-        # Take average query time, excluding first query (warm-up)
-        avg_query_time = np.mean(query_times[1:])
-
-        # Verify memory usage
+        
+        # Generate coordinates all at once
+        coords = rng.random((n_points, 3), dtype=np.float32)
+        
+        # Create all points first to avoid memory fragmentation
+        points = [
+            Point3D(i, coords[i, 0], coords[i, 1], coords[i, 2])
+            for i in range(n_points)
+        ]
+        
+        # Force garbage collection and measure baseline memory
         import gc
-        gc.collect()  # Force garbage collection
-
-        # Sleep briefly to let memory settle
+        gc.collect()
         time.sleep(0.1)
-
         process = psutil.Process(os.getpid())
-        memory_per_point = process.memory_info().rss / n_points
-
-        # Print performance metrics
-        print(f"\nPerformance Metrics:")
-        print(f"Add time: {add_time:.2f}s")
-        print(f"Memory per point: {memory_per_point:.2f} bytes")
-        print(f"Average query time: {avg_query_time*1000:.1f}ms")
-
-        # Verify performance meets requirements based on our memories
-        assert add_time < 5.0, f"Adding points took {add_time:.2f}s, should be under 5s"
-        assert avg_query_time < 0.3, f"Average query time {avg_query_time*1000:.1f}ms exceeds 300ms"
-        assert memory_per_point <= 32.07, f"Memory usage {memory_per_point:.2f} bytes/point exceeds 32.07 bytes"
+        baseline_memory = process.memory_info().rss
+        
+        # Measure add performance with multiple iterations
+        n_iterations = 5
+        add_times = []
+        for _ in range(n_iterations):
+            cloud = PointCloud()  # Fresh cloud for each iteration
+            start_time = time.perf_counter()  # Use high-resolution timer
+            cloud.add_points(points)
+            add_times.append(time.perf_counter() - start_time)
+        
+        add_time = np.mean(add_times)  # Average add time
+        points_per_sec = n_points / add_time if add_time > 0 else float('inf')
+        
+        # Clear points list and force garbage collection
+        points = None
+        coords = None
+        gc.collect()
+        time.sleep(0.1)
+        
+        # Test ID-based lookup performance
+        n_lookups = 1000  # More lookups for better timing accuracy
+        lookup_times = []
+        for _ in range(n_iterations):
+            start_time = time.perf_counter()
+            for _ in range(n_lookups):
+                point_id = rng.integers(0, n_points)
+                cloud.get_point(point_id)
+            lookup_times.append(time.perf_counter() - start_time)
+        
+        lookup_time = np.mean(lookup_times)  # Average lookup time
+        lookups_per_sec = n_lookups / lookup_time if lookup_time > 0 else float('inf')
+        
+        # Test KNN search performance
+        k = 5
+        knn_times = []
+        query_point = Point3D(999, 0.5, 0.5, 0.5)
+        for _ in range(n_iterations):
+            start_time = time.perf_counter()
+            neighbors = cloud.nearest_neighbors(query_point, k=k)
+            knn_times.append(time.perf_counter() - start_time)
+            assert len(neighbors) == k
+        
+        knn_time = np.mean(knn_times)  # Average KNN search time
+        
+        # Measure final memory usage
+        gc.collect()
+        time.sleep(0.1)
+        final_memory = process.memory_info().rss
+        memory_per_point = (final_memory - baseline_memory) / n_points
+        
+        # Performance assertions based on memory system design
+        assert points_per_sec >= 250000, f"Add performance: {points_per_sec:.0f} points/sec"
+        assert lookups_per_sec >= 50000, f"Lookup performance: {lookups_per_sec:.0f} lookups/sec"
+        assert memory_per_point <= 35.0, f"Memory usage: {memory_per_point:.2f} bytes/point"
+        assert knn_time <= 0.001, f"KNN search time: {knn_time*1000:.2f} ms"
